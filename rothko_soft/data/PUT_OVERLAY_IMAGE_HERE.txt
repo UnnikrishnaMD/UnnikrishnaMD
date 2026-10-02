@@ -1,0 +1,3 @@
+Put your overlay image here (PNG or JPG, any size).
+Set overlayFile in rothko_soft.pde to its file name.
+PNG transparency is respected.

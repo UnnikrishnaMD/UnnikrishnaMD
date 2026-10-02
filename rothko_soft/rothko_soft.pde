@@ -5,6 +5,10 @@
 // Every edge (outer and between blocks) is feathered, and the inside of
 // each block is built from thin, uneven washes instead of flat fill.
 //
+// Overlay: drop an image in data/ and set overlayFile below. Controls
+// for position, size, rotation, transparency, blend and the generative
+// transformation are all in the "overlay image" section.
+//
 // If you get OutOfMemoryError: Processing > Settings >
 // "Increase maximum available memory" and set it to 2048 MB or more.
 
@@ -51,6 +55,44 @@ float grain      = 5.0;    // print grain, in 0–255 levels
 // soft pigment motes (the old particles, now feathered glazes)
 int numParticles = 9000;
 
+// ---------- overlay image ----------
+// Put any image in the sketch's data/ folder and name it here.
+// If the file is missing, a typographic placeholder (an ampersand) is used.
+// Every control is a proportion, so it works with any image size and any
+// PRINT_PX: change the canvas size and the overlay keeps its place and scale.
+boolean overlayOn     = true;
+String  overlayFile   = "overlay.png";
+
+float overlayX        = 0.62;  // centre of the overlay, 0 = left edge, 1 = right edge
+float overlayY        = 0.46;  // centre of the overlay, 0 = top, 1 = bottom
+float overlaySize     = 0.55;  // longest side of the image as a share of the canvas.
+                               // Aspect ratio is always kept, so it only grows or shrinks.
+float overlayRotation = -6;    // degrees
+boolean overlayFlipX  = false;
+
+float overlayOpacity  = 0.55;  // transparency: 0 = invisible, 1 = fully opaque
+String overlayBlend   = "MULTIPLY"; // NORMAL, MULTIPLY, SCREEN, SOFT_LIGHT
+float overlayFeather  = 0.18;  // soft fade at the overlay's own edges, share of its short side
+float overlaySoftness = 0.0015; // blur on the overlay's forms, share of canvas (0 = crisp marks)
+
+// How the image is turned into abstract forms:
+//   "RAW"   the image itself (still soft-edged and blended)
+//   "FLOW"  brush strokes that drift through a noise field, steered by the image's tones
+//   "DOTS"  soft dots, sized by how dark the image is underneath
+//   "BANDS" soft horizontal bars sampled from the image, echoing the colour fields
+String overlayMode    = "FLOW";
+
+int   markCount       = 7000;  // strokes / dots / bars
+float markSize        = 0.006; // stroke width or dot radius, share of the canvas
+float markLength      = 0.06;  // stroke length (FLOW) or bar stretch (BANDS), share of canvas
+float markAlpha       = 0.35;  // opacity of a single mark before overlayOpacity
+float flowScale       = 2.2;   // FLOW: size of the swirls (higher = tighter turns)
+float flowTurbulence  = 1.4;   // FLOW: how much the noise bends the strokes
+float toneSteer       = 1.0;   // FLOW: how much the image's light/dark turns the strokes
+float sizeByTone      = 0.8;   // DOTS/BANDS: 0 = all marks the same size, 1 = dark areas biggest
+float lumaCutoff      = 0.97;  // skip marks where the image is lighter than this (0–1)
+float paletteMix      = 0.45;  // 0 = image's own colours, 1 = remapped to the three field colours
+
 PGraphics pg;
 int S, G;
 float[][] blockMask, blockTone;
@@ -70,17 +112,20 @@ void setup() {
   layoutBlocks();
   println("building soft fields...");
   buildFields();
+  PGraphics overlayLayer = overlayOn ? buildOverlay() : null;
   println("painting " + S + " x " + S + " px...");
   pg = createGraphics(S, S);
   pg.beginDraw();
   pg.loadPixels();
   paintFields();
   paintMotes();
+  if (overlayLayer != null) compositeOverlay(overlayLayer);
   pg.updatePixels();
   drawCredit();
   pg.endDraw();
 
-  String file = savePath + "rothko_soft_" + S + "px_" + PRINT_DPI + "ppi.png";
+  String tag = overlayOn ? "_overlay_" + overlayMode.toLowerCase() : "";
+  String file = savePath + "rothko_soft" + tag + "_" + S + "px_" + PRINT_DPI + "ppi.png";
   println("saving " + file + " ...");
   pg.loadPixels();
   try {
