@@ -805,10 +805,18 @@ void buildFillerPlants() {
       float density = lerp(0.22, 0.8, clump);
       if (t > 0.78) density = lerp(0.55, 1.1, clump); // fuller up front, still clumped
       else if (t < 0.35) density = lerp(0.03, 0.22, clump); // far meadow should visibly thin toward the horizon
+      // NODE: beyond the drawing's left/right edges there are no swirls for contour vines to root on,
+      // so on the wide wall the meadow there read as thin grass beside a dense thicket. `open` ramps
+      // from 0 at the drawing's edge to 1 a short way out (no hard seam), and thickens, lengthens and
+      // enlarges the meadow there so the growth carries across the whole width.
+      float open = constrain(max(place[0] - px, px - (place[0] + place[2])) / 220.0, 0, 1);
+      density = lerp(density, density * 1.6 + 0.2, open);
       if (above == 0 && random(1) > density) continue;
       if (above == 2 && random(1) < 0.6) continue;
       Plant p = makeFillerPlant(px, py, t, above);
       p.sizeScale *= lerp(0.8, 1.2, clump); // thick patches also grow a touch larger
+      p.sizeScale *= lerp(1, 1.2, open);
+      p.maxSteps = int(p.maxSteps * lerp(1, 1.9, open));
       fillerPlants.add(p);
     }
   }
