@@ -75,7 +75,7 @@ void forceAllGrown() {
 // Legible at the start of each piece, then eaten away from the edges inward while the plants take over,
 // ending as scattered abstract fragments - only the figure stays whole.
 float erosionStart = 0.1;  // fraction of growSeconds before erosion begins
-float erosionEnd = 0.88;   // how far it gets by the end of the hold (1 = nothing left)
+float erosionEnd = 0.66;   // how far it gets by the end of the hold (1 = nothing left; ~0.66 leaves abstract letter fragments)
 
 float erosionAt(float t) {
   float t0 = S.growSeconds * erosionStart;

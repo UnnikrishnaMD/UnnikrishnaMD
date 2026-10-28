@@ -71,11 +71,12 @@ In `Compositor.pde`: `typeFontName` (any installed font, or a .ttf in `data/`), 
 
 ## Render time and memory
 
-Measured on a 4-core Linux machine with Processing core 4.3.1:
+Measured on a 4-core Linux machine with Processing core 4.3.1 (a recent Mac will likely be faster):
 
-- pool (1600 × 1600): see the numbers in the session notes; roughly 1 s per frame while growing.
-- wall (8640 × 2160): roughly 2 s per frame while growing, much faster during the hold (the grown
-  plants are drawn once and reused). The full 2:24 wall loop is a several-hour, overnight render.
+- wall (8640 × 2160): ~1.2 s per frame on average — a 720-frame test loop took 14 minutes, so the
+  full 2:24 loop (4,320 frames) is roughly 1½ hours. Its master was 667 MB; `encode_for_node.sh`
+  brought it to 471 MB.
+- pool (1600 × 1600): ~0.9 s per frame — the full 2:00 loop (3,600 frames) is under an hour.
 
 The wall needs several GB of memory (each full-size layer is ~75 MB). If you see `OutOfMemoryError`,
 raise Processing's maximum memory (Preferences, or `run.options.memory.maximum` in `preferences.txt`).
