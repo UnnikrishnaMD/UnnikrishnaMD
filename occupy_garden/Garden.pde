@@ -844,6 +844,12 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
   else if (above == 2) p.maxSteps = int(constrain((lastAboveDist - 18) / 1.25, 4, 18));
   p.flowerSize *= lerp(0.5, 1.15, min(t, 1));
   p.isFiller = true;
+  // NODE: the meadow wears the same two foliage tones as the vines that cover the figure (the vine
+  // species' cerulean and fresh green), and its blooms take their colours from the drawing's own swirl
+  // decoration - so the foreground reads as the same growth as the figure's, not a separate ochre field.
+  // Chosen by hash, not random(), so the layout itself is unchanged.
+  p.toneOverride = hashUnit(p.varietySeed, 401) < 0.5 ? GREEN_CERULEAN : GREEN_FRESH;
+  p.usesAccentColor = true;
   return p;
 }
 
@@ -987,6 +993,7 @@ class Plant {
   int petalCount;
   float growStart; // NODE: when this plant starts within its group's growth window (see setupGrowth)
   int growCalls;   // NODE: grow() calls made so far by the growth schedule
+  int toneOverride = -1; // NODE: foliage tone (naturalGreens index) used instead of the species' own; -1 = species tone
 
   Plant(float x, float y, color imgCol, boolean creeping) {
     this(x, y, imgCol, creeping, pickSpecies(creeping));
@@ -1052,6 +1059,8 @@ class Plant {
             Plant br = new Plant(base.x, base.y, imageColor, isCreeper, speciesIndex);
             br.canBranch = false;
             br.canCrossBody = canCrossBody; // inherit - a branch off a body-permitted vine may also touch it
+            br.toneOverride = toneOverride; // NODE: a branch keeps its parent's foliage tone
+            if (isFiller) br.usesAccentColor = true; // NODE: and a meadow branch's bloom keeps the artwork's colours
             br.heading = leafAngle;
             br.sizeScale = sizeScale * random(0.45, 0.65);
             br.maxSteps = int(maxSteps * random(0.3, 0.55));
@@ -1695,13 +1704,16 @@ color localizedBreak(color c, float px, float py) {
 
 // Blend weight toward the species green is high (0.8-0.9) so the species tone actually dominates the
 // narrow, largely-fixed base colour most plants sample - which is what real green variants require.
+int foliageTone(Plant p) {
+  return p.toneOverride >= 0 ? p.toneOverride : SPECIES[p.speciesIndex].greenTone;
+}
 color stemColor(Plant p) {
-  color baseGreen = jitterTone(naturalGreens[SPECIES[p.speciesIndex].greenTone], p.paletteSlot);
+  color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot);
   PVector root = p.path.get(0);
   return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.8))), root.x, root.y);
 }
 color leafColor(Plant p) {
-  color baseGreen = jitterTone(naturalGreens[SPECIES[p.speciesIndex].greenTone], p.paletteSlot + 777);
+  color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot + 777);
   PVector root = p.path.get(0);
   return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.9))), root.x, root.y);
 }
@@ -1810,7 +1822,9 @@ color[] editionBgColors() { // { primary, secondary } — deep enough that the p
 // depth; this gives the whole canvas a genuine "standing in a landscape" spatial structure to play against.
 color skyTop = color(94, 168, 214);
 color skyHorizon = color(226, 216, 190);
-color earthColor = color(90, 66, 44);
+// NODE: was a brown earth (90, 66, 44) - showing between the foreground stems it made the whole front
+// of the meadow read ochre. A deep cerulean-green shade instead, the shadow of the growth itself.
+color earthColor = color(28, 84, 80);
 
 void drawEditionBackground(PGraphics pg) {
   color[] duo = editionBgColors();

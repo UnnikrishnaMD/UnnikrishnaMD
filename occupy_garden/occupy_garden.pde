@@ -53,13 +53,14 @@ class Surface {
 
 // The wall's logical canvas is 3840 x 960 (x2.25 = 8640 x 2160): the figure keeps roughly the on-canvas
 // size it was tuned at in the original 1920 x 1080 sketch, relative to the plants, and the extra width
-// becomes open meadow on either side. Grid: 240px margin, 20 x 4 cells (~385 x 402px) with 24px gutters.
+// becomes open meadow on either side. Type grid: 240px margin, 6 x 6 CTA cells (~1340 x 260px) with
+// 24px gutters. Pools: 80px margin, 2 x 6 cells (~708 x 220px).
 // Wall timing: 6 pieces x (18s grow + 6s hold) = 2:24, which keeps the master well inside 500 MB at 8640px.
 // The pools play three pieces each, slower, since their files are small.
 Surface[] SURFACES = {
-  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 20, 4, new int[]{0, 1, 2, 3, 4, 5}, 0.92, -0.12, 0.02, false, 18, 6),
-  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  24, 4,  4, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
-  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  24, 4,  4, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
+  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 6, 6, new int[]{0, 1, 2, 3, 4, 5}, 0.92, -0.12, 0.02, false, 18, 6),
+  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  24, 2, 6, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
+  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  24, 2, 6, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
 };
 
 // ---------- The six pieces ----------
@@ -68,20 +69,20 @@ Surface[] SURFACES = {
 // multi-coloured figure - needs a `mask`: a black/white PNG the same size as the drawing, white where
 // the figure is. Leave mask "" to detect the figure by its dominant fill hue, as before.
 // faceZone is in the drawing's pixel space after it's scaled to 1920px wide (null = no face protection).
-// The words are placeholders - choose your own.
+// The type grid's CTAs are drawn at random from the sketch's own CTA lists (see ctaVocabulary), a
+// different spread per piece.
 class Piece {
   String title;
   int edition;
-  String drawing, mask, word;
+  String drawing, mask;
   int seed;
   float[] faceZone;
 
-  Piece(String title, int edition, String drawing, String mask, String word, int seed, float[] faceZone) {
+  Piece(String title, int edition, String drawing, String mask, int seed, float[] faceZone) {
     this.title = title;
     this.edition = edition;
     this.drawing = drawing;
     this.mask = mask;
-    this.word = word;
     this.seed = seed;
     this.faceZone = faceZone;
   }
@@ -90,12 +91,12 @@ class Piece {
 float[] RECLINING_FACE = {170, 190, 470, 490}; // identified by inspecting recliningman.png in the original sketch
 
 Piece[] PIECES = {
-  new Piece("I · Botanical",          0, "recliningman.jpg", "", "GROW",  42, RECLINING_FACE),
-  new Piece("II · Barcode Understory", 1, "recliningman.jpg", "", "SCAN",  42, RECLINING_FACE),
-  new Piece("III · Logo Bloom",        2, "recliningman.jpg", "", "BRAND", 42, RECLINING_FACE),
-  new Piece("IV · Ad Canopy",          3, "recliningman.jpg", "", "CLICK", 42, RECLINING_FACE),
-  new Piece("V · Currency Bloom",      4, "recliningman.jpg", "", "SPEND", 42, RECLINING_FACE),
-  new Piece("VI · Plastic Garden",     5, "recliningman.jpg", "", "WRAP",  42, RECLINING_FACE)
+  new Piece("I · Botanical",          0, "recliningman.jpg", "", 42, RECLINING_FACE),
+  new Piece("II · Barcode Understory", 1, "recliningman.jpg", "", 42, RECLINING_FACE),
+  new Piece("III · Logo Bloom",        2, "recliningman.jpg", "", 42, RECLINING_FACE),
+  new Piece("IV · Ad Canopy",          3, "recliningman.jpg", "", 42, RECLINING_FACE),
+  new Piece("V · Currency Bloom",      4, "recliningman.jpg", "", 42, RECLINING_FACE),
+  new Piece("VI · Plastic Garden",     5, "recliningman.jpg", "", 42, RECLINING_FACE)
 };
 
 // ---------- Timeline / render state ----------
@@ -261,7 +262,6 @@ void applyPiece(Piece pc) {
   } else {
     faceZoneX0 = 1; faceZoneY0 = 1; faceZoneX1 = 0; faceZoneY1 = 0; // empty box - nothing is ever inside it
   }
-  typeWord = pc.word;
   typeInk = typeInkFor(editionIndex);
   bodyMaskDebugLayer = null;
 }

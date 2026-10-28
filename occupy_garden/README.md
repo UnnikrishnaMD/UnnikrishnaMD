@@ -10,8 +10,9 @@ exact pixel size.
 | `pool2` — LED pool 2 | 1600 × 1600 MP4 | pieces II, IV, VI | 3 × (30 s + 10 s) = 2:00 loop |
 
 Each piece is one edition of the same system: the figure starts bare, the meadow grows in patch by
-patch (outline vines first, then vines on the letters, contours, main grid, meadow), and a grunge
-type grid behind the figure erodes from legible letters into abstract fragments. Billboards and
+patch (outline vines first, then vines on the letters, contours, main grid, meadow), and a grid of
+random advertising calls to action (drawn from the sketch's own CTA lists) spread across the canvas
+behind the figure erodes from legible type into abstract letter fragments. Billboards and
 drifting coins arrive late in the growth. Each piece crossfades into the next, and the last crossfades
 back into the first, so every file loops without a jump. The three files don't need to start together.
 
@@ -59,13 +60,14 @@ Arguments: `surface=wall|pool1|pool2`, `render`, `stills`, `exit`, `seed=N`, and
 
 All in `occupy_garden.pde`:
 
-- **`PIECES`**: each piece's edition, drawing, optional mask, word, seed and face zone. The words
-  (`GROW`, `SCAN`, `BRAND`, `CLICK`, `SPEND`, `WRAP`) are placeholders.
-- **`SURFACES`**: figure placement, safe margin, grid (wall: 20 × 4 cells, pools: 4 × 4), timing.
+- **`PIECES`**: each piece's edition, drawing, optional mask, seed and face zone.
+- **`SURFACES`**: figure placement, safe margin, CTA grid (wall: 6 × 6 cells, pools: 2 × 6), timing.
   NODE's pixel map gives no safe area, so the 240 px (wall) / 80 px (pool) margin is our own choice.
 
 In `Compositor.pde`: `typeFontName` (any installed font, or a .ttf in `data/`), `typeCellFill`,
-`erosionEnd`, `growthSpread`, and the ink colour per edition in `typeInkFor()`.
+`typeMaxChars` (longest CTA allowed — longer ones shrink the shared type size), `erosionEnd`,
+`growthSpread`, and the ink colour per edition in `typeInkFor()`. The CTA vocabulary itself is the
+`cta*` lists in `Garden.pde`.
 
 ## Render time and memory
 

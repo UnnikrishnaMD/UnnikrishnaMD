@@ -162,30 +162,45 @@ void composeFrame(PGraphics f) {
 }
 
 // ---------------- Grunge type grid ----------------
-// One word per piece, set one letter per cell across a grid inside the safe margin, behind the figure.
-// The plants grow over it, vines root on the letter outlines (typePlants), and over the piece the
-// letters erode - edges first, through noise - until only abstract fragments remain. Erosion is a fixed
+// A grid of advertising calls to action spread across the whole canvas inside the safe margin, behind
+// the figure - a different random CTA in each cell, all set at one size, left-aligned to the cell. The
+// plants grow over it, vines root on the letter outlines (typePlants), and over the piece the letters
+// erode - edges first, through noise - until only abstract letter fragments remain. Erosion is a fixed
 // per-pixel threshold map compared against one number per frame, so it costs almost nothing to animate
 // and the grain stays still (moving grain would be both noisy and expensive to encode).
 
 String typeFontName = "SansSerif.bold"; // any installed font name, or a .ttf/.otf placed in data/
 final float CAP_HEIGHT = 0.72;          // cap height as a fraction of font size (Helvetica/Arial bold) - for vertical centring
-float typeCellFill = 0.88;              // fraction of cells that get a letter - the gaps let the grid breathe
+float typeCellFill = 0.8;               // fraction of cells that get a CTA - the gaps let the grid breathe
+int typeMaxChars = 11;                  // longest CTA used: keeps one shared type size from shrinking to fit a long phrase
 float typeVineCell = 34;                // min spacing between vines rooted on letter outlines (logical px)
 float typeVineKeepProb = 0.35;
-String typeWord = "";
 color typeInk;
 
 class TypeCell {
   float cx, cy;
-  char ch;
+  String words;
   int rot; // quarter turns
-  TypeCell(float cx, float cy, char ch, int rot) {
+  TypeCell(float cx, float cy, String words, int rot) {
     this.cx = cx;
     this.cy = cy;
-    this.ch = ch;
+    this.words = words;
     this.rot = rot;
   }
+}
+
+// The grid's vocabulary: every short entry in the sketch's own CTA lists (the same ones Ad Canopy draws
+// from), uppercased and de-duplicated - so the type never says anything the ad layer couldn't.
+ArrayList<String> ctaVocabulary() {
+  String[][] pools = { ctaShop, ctaUrgency, ctaLearn, ctaDiscount, ctaBrand, ctaDigitalScreen, ctaCountdown };
+  ArrayList<String> words = new ArrayList<String>();
+  for (String[] pool : pools) {
+    for (String s : pool) {
+      String u = s.toUpperCase();
+      if (u.length() <= typeMaxChars && !words.contains(u)) words.add(u);
+    }
+  }
+  return words;
 }
 
 ArrayList<TypeCell> typeCells = new ArrayList<TypeCell>();
@@ -218,31 +233,39 @@ void buildTypeGrid() {
   float m = S.margin / os, gut = S.gutter / os;
   typeCellW = (W - 2 * m - (S.cols - 1) * gut) / S.cols;
   typeCellH = (H - 2 * m - (S.rows - 1) * gut) / S.rows;
-  String word = typeWord.replace(" ", "");
-  if (word.length() == 0) return;
+  ArrayList<String> vocab = ctaVocabulary();
 
-  // One size for the whole grid, fitted to the widest letter in the word, so the grid reads as one
-  // typeface at one size instead of every letter scaled to fill its own cell.
+  // Its own generator, seeded by piece seed AND edition, so each piece gets a different spread of CTAs
+  // even though all six share one seed - and the garden's random() stream is left untouched.
+  java.util.Random rng = new java.util.Random(sketchSeed * 7919L + editionIndex * 104729L);
+  String[][] grid = new String[S.rows][S.cols];
+  for (int r = 0; r < S.rows; r++) {
+    for (int c = 0; c < S.cols; c++) {
+      if (rng.nextFloat() > typeCellFill) continue;
+      String pick;
+      int tries = 0;
+      do { // never the same CTA as the cell to the left or above
+        pick = vocab.get(rng.nextInt(vocab.size()));
+        tries++;
+      } while (tries < 20 && ((c > 0 && pick.equals(grid[r][c - 1])) || (r > 0 && pick.equals(grid[r - 1][c]))));
+      grid[r][c] = pick;
+      // Pools are seen from above by people on every side: a cell reads either way up, never sideways,
+      // since a rotated phrase wouldn't fit its wide cell.
+      int rot = S.rotateCells && rng.nextFloat() < 0.5 ? 2 : 0;
+      float cx = m + c * (typeCellW + gut) + typeCellW * 0.5;
+      float cy = m + r * (typeCellH + gut) + typeCellH * 0.5;
+      typeCells.add(new TypeCell(cx, cy, pick, rot));
+    }
+  }
+  if (typeCells.isEmpty()) return;
+
+  // One size for the whole grid, fitted so the longest CTA actually placed fills its cell, so the grid
+  // reads as one typeface at one size instead of every phrase scaled to fill its own cell.
   textFont(typeFont);
   textSize(100);
   float widest = 0;
-  for (int i = 0; i < word.length(); i++) widest = max(widest, textWidth(word.charAt(i)) / 100);
-  float boxW = S.rotateCells ? min(typeCellW, typeCellH) : typeCellW;
-  float boxH = S.rotateCells ? min(typeCellW, typeCellH) : typeCellH;
-  typeSize = min(boxH * 0.9 / CAP_HEIGHT, boxW * 0.92 / max(0.01, widest));
-
-  int k = 0;
-  for (int r = 0; r < S.rows; r++) {
-    for (int c = 0; c < S.cols; c++) {
-      char letter = word.charAt(k % word.length());
-      k++; // advances even past an empty cell, so the word keeps its reading order across the gaps
-      if (random(1) > typeCellFill) continue;
-      int rot = S.rotateCells ? int(random(4)) : 0;
-      float cx = m + c * (typeCellW + gut) + typeCellW * 0.5;
-      float cy = m + r * (typeCellH + gut) + typeCellH * 0.5;
-      typeCells.add(new TypeCell(cx, cy, letter, rot));
-    }
-  }
+  for (TypeCell tc : typeCells) widest = max(widest, textWidth(tc.words) / 100);
+  typeSize = min(typeCellH * 0.9 / CAP_HEIGHT, typeCellW * 0.97 / max(0.01, widest));
 
   // Vines rooted on the letter outlines - the same edge seeding the background contours use, run on the
   // type instead, so the meadow visibly grows out of the words before the words wear away.
@@ -267,12 +290,12 @@ void buildTypeGrid() {
 void drawTypeCells(PGraphics pg) {
   pg.textFont(typeFont);
   pg.textSize(typeSize);
-  pg.textAlign(CENTER, BASELINE);
+  pg.textAlign(LEFT, BASELINE);
   for (TypeCell tc : typeCells) {
     pg.pushMatrix();
-    pg.translate(tc.cx, tc.cy);
+    pg.translate(tc.cx, tc.cy); // rotate about the cell centre, then set from the cell's left edge
     pg.rotate(tc.rot * HALF_PI);
-    pg.text(tc.ch, 0, typeSize * CAP_HEIGHT * 0.5);
+    pg.text(tc.words, -typeCellW * 0.5, typeSize * CAP_HEIGHT * 0.5);
     pg.popMatrix();
   }
 }
