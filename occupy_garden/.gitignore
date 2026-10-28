@@ -1,0 +1,4 @@
+# artwork and renders stay local
+data/*
+!data/README.md
+output/
