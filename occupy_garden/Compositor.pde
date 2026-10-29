@@ -162,42 +162,44 @@ void composeFrame(PGraphics f) {
 }
 
 // ---------------- Grunge type grid ----------------
-// A grid of advertising calls to action spread across the whole canvas inside the safe margin, behind
-// the figure - a different random CTA in each cell, all set at one size, left-aligned to the cell. The
-// plants grow over it, vines root on the letter outlines (typePlants), and over the piece the letters
-// erode - edges first, through noise - until only abstract letter fragments remain. Erosion is a fixed
-// per-pixel threshold map compared against one number per frame, so it costs almost nothing to animate
-// and the grain stays still (moving grain would be both noisy and expensive to encode).
+// The whole canvas inside the safe margin filled with type: one letter per near-square cell, every
+// cell filled, running as one continuous stream of the sketch's advertising calls to action with the
+// spaces taken out (SHOPNOWLASTCHANCEGET20%OFF...), row after row, behind the figure. It doesn't need to
+// be read - it's a field of advertising language. The plants grow over it, vines root on the letter
+// outlines (typePlants), and over the piece the letters erode - edges first, through noise - until only
+// abstract letter fragments remain. Erosion is a fixed per-pixel threshold map compared against one
+// number per frame, so it costs almost nothing to animate and the grain stays still (moving grain would
+// be both noisy and expensive to encode).
 
 String typeFontName = "SansSerif.bold"; // any installed font name, or a .ttf/.otf placed in data/
 final float CAP_HEIGHT = 0.72;          // cap height as a fraction of font size (Helvetica/Arial bold) - for vertical centring
-float typeCellFill = 0.8;               // fraction of cells that get a CTA - the gaps let the grid breathe
-int typeMaxChars = 11;                  // longest CTA used: keeps one shared type size from shrinking to fit a long phrase
-float typeVineCell = 34;                // min spacing between vines rooted on letter outlines (logical px)
-float typeVineKeepProb = 0.35;
+float typeCellFill = 1.0;               // fraction of letter cells filled (1 = the whole canvas)
+float typeVineCell = 44;                // min spacing between vines rooted on letter outlines (logical px)
+float typeVineKeepProb = 0.3;
 color typeInk;
 
 class TypeCell {
   float cx, cy;
-  String words;
-  int rot; // quarter turns
-  TypeCell(float cx, float cy, String words, int rot) {
+  String ch; // one letter
+  int rot;   // quarter turns
+  TypeCell(float cx, float cy, String ch, int rot) {
     this.cx = cx;
     this.cy = cy;
-    this.words = words;
+    this.ch = ch;
     this.rot = rot;
   }
 }
 
-// The grid's vocabulary: every short entry in the sketch's own CTA lists (the same ones Ad Canopy draws
-// from), uppercased and de-duplicated - so the type never says anything the ad layer couldn't.
+// The stream's vocabulary: every entry in the sketch's own CTA lists (the same ones Ad Canopy draws
+// from), uppercased, spaces removed and de-duplicated - so the type never says anything the ad layer
+// couldn't.
 ArrayList<String> ctaVocabulary() {
   String[][] pools = { ctaShop, ctaUrgency, ctaLearn, ctaDiscount, ctaBrand, ctaDigitalScreen, ctaCountdown };
   ArrayList<String> words = new ArrayList<String>();
   for (String[] pool : pools) {
     for (String s : pool) {
-      String u = s.toUpperCase();
-      if (u.length() <= typeMaxChars && !words.contains(u)) words.add(u);
+      String u = s.toUpperCase().replace(" ", "");
+      if (!words.contains(u)) words.add(u);
     }
   }
   return words;
@@ -231,41 +233,47 @@ void buildTypeGrid() {
   typePlants.clear();
   float os = S.outScale();
   float m = S.margin / os, gut = S.gutter / os;
-  typeCellW = (W - 2 * m - (S.cols - 1) * gut) / S.cols;
+  // Rows are set per surface; columns follow from them so the letter cells come out close to square.
   typeCellH = (H - 2 * m - (S.rows - 1) * gut) / S.rows;
-  ArrayList<String> vocab = ctaVocabulary();
+  int cols = max(1, round((W - 2 * m + gut) / (typeCellH + gut)));
+  typeCellW = (W - 2 * m - (cols - 1) * gut) / cols;
 
-  // Its own generator, seeded by piece seed AND edition, so each piece gets a different spread of CTAs
+  // Its own generator, seeded by piece seed AND edition, so each piece gets a different stream of CTAs
   // even though all six share one seed - and the garden's random() stream is left untouched.
   java.util.Random rng = new java.util.Random(sketchSeed * 7919L + editionIndex * 104729L);
-  String[][] grid = new String[S.rows][S.cols];
+  ArrayList<String> vocab = ctaVocabulary();
+  StringBuilder stream = new StringBuilder();
+  String last = "";
+  while (stream.length() < S.rows * cols) {
+    String pick = vocab.get(rng.nextInt(vocab.size()));
+    if (pick.equals(last)) continue; // never the same CTA twice in a row
+    stream.append(pick);
+    last = pick;
+  }
+
+  int k = 0;
   for (int r = 0; r < S.rows; r++) {
-    for (int c = 0; c < S.cols; c++) {
+    for (int c = 0; c < cols; c++) {
+      String letter = str(stream.charAt(k++));
       if (rng.nextFloat() > typeCellFill) continue;
-      String pick;
-      int tries = 0;
-      do { // never the same CTA as the cell to the left or above
-        pick = vocab.get(rng.nextInt(vocab.size()));
-        tries++;
-      } while (tries < 20 && ((c > 0 && pick.equals(grid[r][c - 1])) || (r > 0 && pick.equals(grid[r - 1][c]))));
-      grid[r][c] = pick;
-      // Pools are seen from above by people on every side: a cell reads either way up, never sideways,
-      // since a rotated phrase wouldn't fit its wide cell.
-      int rot = S.rotateCells && rng.nextFloat() < 0.5 ? 2 : 0;
+      // Pools are seen from above by people on every side: letters face every direction there.
+      int rot = S.rotateCells ? rng.nextInt(4) : 0;
       float cx = m + c * (typeCellW + gut) + typeCellW * 0.5;
       float cy = m + r * (typeCellH + gut) + typeCellH * 0.5;
-      typeCells.add(new TypeCell(cx, cy, pick, rot));
+      typeCells.add(new TypeCell(cx, cy, letter, rot));
     }
   }
   if (typeCells.isEmpty()) return;
 
-  // One size for the whole grid, fitted so the longest CTA actually placed fills its cell, so the grid
-  // reads as one typeface at one size instead of every phrase scaled to fill its own cell.
+  // One size for every letter, fitted so the widest letter actually used fills its cell, so the field
+  // reads as one typeface at one size instead of every letter scaled to fill its own cell.
   textFont(typeFont);
   textSize(100);
   float widest = 0;
-  for (TypeCell tc : typeCells) widest = max(widest, textWidth(tc.words) / 100);
-  typeSize = min(typeCellH * 0.9 / CAP_HEIGHT, typeCellW * 0.97 / max(0.01, widest));
+  for (TypeCell tc : typeCells) widest = max(widest, textWidth(tc.ch) / 100);
+  float boxW = S.rotateCells ? min(typeCellW, typeCellH) : typeCellW;
+  float boxH = S.rotateCells ? min(typeCellW, typeCellH) : typeCellH;
+  typeSize = min(boxH * 0.9 / CAP_HEIGHT, boxW * 0.92 / max(0.01, widest));
 
   // Vines rooted on the letter outlines - the same edge seeding the background contours use, run on the
   // type instead, so the meadow visibly grows out of the words before the words wear away.
@@ -290,12 +298,12 @@ void buildTypeGrid() {
 void drawTypeCells(PGraphics pg) {
   pg.textFont(typeFont);
   pg.textSize(typeSize);
-  pg.textAlign(LEFT, BASELINE);
+  pg.textAlign(CENTER, BASELINE);
   for (TypeCell tc : typeCells) {
     pg.pushMatrix();
-    pg.translate(tc.cx, tc.cy); // rotate about the cell centre, then set from the cell's left edge
+    pg.translate(tc.cx, tc.cy);
     pg.rotate(tc.rot * HALF_PI);
-    pg.text(tc.words, -typeCellW * 0.5, typeSize * CAP_HEIGHT * 0.5);
+    pg.text(tc.ch, 0, typeSize * CAP_HEIGHT * 0.5);
     pg.popMatrix();
   }
 }

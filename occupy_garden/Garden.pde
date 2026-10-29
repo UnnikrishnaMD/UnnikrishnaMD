@@ -192,6 +192,7 @@ void buildAll() {
   buildBodyContourPlants();
   buildContourPlants();
   buildFillerPlants();
+  spreadAroundFigure();
   buildConsumerLayer();
   buildTypeGrid();
   printSpeciesCounts();
@@ -859,6 +860,29 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
   p.toneOverride = hashUnit(p.varietySeed, 401) < 0.5 ? GREEN_CERULEAN : GREEN_FRESH;
   p.usesAccentColor = true;
   return p;
+}
+
+// NODE: the growth near and around the figure sprawls out to the sides instead of mostly shooting
+// straight up. Every plant rooted over the drawing (fading out over ~220 logical px beyond its left/right
+// edges) starts its stem leaning left or right - well toward horizontal - and grows a little longer, so
+// the meadow spreads sideways around the body. Side and lean come from a hash, not random(), so the
+// layout is unchanged; vines deliberately aimed onto the body (canCrossBody) keep their heading.
+void spreadAroundFigure() {
+  ArrayList<Plant> all = new ArrayList<Plant>();
+  all.addAll(plants);
+  all.addAll(contourPlants);
+  all.addAll(bodyContourPlants);
+  all.addAll(fillerPlants);
+  for (Plant p : all) {
+    if (p.canCrossBody) continue;
+    PVector root = p.path.get(0);
+    float near = 1 - constrain(max(srcPlace[0] - root.x, root.x - (srcPlace[0] + srcPlace[2])) / 220.0, 0, 1);
+    if (near <= 0) continue;
+    float side = hashUnit(p.varietySeed, 503) < 0.5 ? -1 : 1;
+    float lean = lerp(0.75, 1.3, hashUnit(p.varietySeed, 509)) * near; // radians away from straight up
+    p.heading = -HALF_PI + side * lean;
+    p.maxSteps = int(p.maxSteps * (1 + 0.35 * near));
+  }
 }
 
 // The near/far split for the meadow: filler plants rooted below this line are "foreground".

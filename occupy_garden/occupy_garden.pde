@@ -21,7 +21,7 @@ class Surface {
   int outW, outH;          // the exact file size NODE's File Upload asks for
   int W, H;                // the logical canvas the garden is laid out in - every coordinate in Garden.pde
   float margin, gutter;    // type-grid safe area and gutters, in OUTPUT pixels (NODE gives no safe area - this one is ours)
-  int cols, rows;
+  int cols, rows;          // type field: rows of letter cells (cols is unused - columns follow from the rows so cells come out square)
   int[] playlist;          // which PIECES this surface plays, in order
   float figureScale, figureOffsetX, figureOffsetY; // figure placement; offsets as a fraction of the logical canvas
   boolean rotateCells;     // pools are (probably) seen from above - letters face every direction, no single "up"
@@ -53,14 +53,14 @@ class Surface {
 
 // The wall's logical canvas is 3840 x 960 (x2.25 = 8640 x 2160): the figure keeps roughly the on-canvas
 // size it was tuned at in the original 1920 x 1080 sketch, relative to the plants, and the extra width
-// becomes open meadow on either side. Type grid: 240px margin, 6 x 6 CTA cells (~1340 x 260px) with
-// 24px gutters. Pools: 80px margin, 2 x 6 cells (~708 x 220px).
+// becomes open meadow on either side. Type field: 240px margin, 8 rows of letter cells with 24px
+// gutters - 41 x 8 letters of ~176 x 189px on the wall, 8 x 8 letters of ~159px on each pool.
 // Wall timing: 6 pieces x (18s grow + 6s hold) = 2:24, which keeps the master well inside 500 MB at 8640px.
 // The pools play three pieces each, slower, since their files are small.
 Surface[] SURFACES = {
-  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 6, 6, new int[]{0, 1, 2, 3, 4, 5}, 0.92, 0,     0.02, false, 18, 6),
-  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  24, 2, 6, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
-  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  24, 2, 6, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
+  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 0, 8, new int[]{0, 1, 2, 3, 4, 5}, 0.92, 0,     0.02, false, 18, 6),
+  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  24, 0, 8, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
+  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  24, 0, 8, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
 };
 
 // ---------- The six pieces ----------
