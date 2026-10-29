@@ -194,6 +194,8 @@ String pickTypeFont() {
 }
 final float CAP_HEIGHT = 0.72;          // cap height as a fraction of font size (Helvetica/Arial bold) - for vertical centring
 float typeCellFill = 1.0;               // fraction of letter cells filled (1 = the whole canvas)
+float typeLetterScale = 0.62;           // letter size as a fraction of what would fill its cell - the rest is breathing space
+float typeAlphaMin = 0.25, typeAlphaMax = 1.0; // each letter gets its own random opacity in this range
 float typeVineCell = 44;                // min spacing between vines rooted on letter outlines (logical px)
 float typeVineKeepProb = 0.3;
 color typeInk;
@@ -202,11 +204,13 @@ class TypeCell {
   float cx, cy;
   String ch; // one letter
   int rot;   // quarter turns
-  TypeCell(float cx, float cy, String ch, int rot) {
+  float alpha; // 0..1 opacity of this letter
+  TypeCell(float cx, float cy, String ch, int rot, float alpha) {
     this.cx = cx;
     this.cy = cy;
     this.ch = ch;
     this.rot = rot;
+    this.alpha = alpha;
   }
 }
 
@@ -228,10 +232,13 @@ ArrayList<String> ctaVocabulary() {
 ArrayList<TypeCell> typeCells = new ArrayList<TypeCell>();
 ArrayList<Plant> typePlants = new ArrayList<Plant>(); // vines rooted on the letters' outlines
 PFont typeFont;
-float typeSize = 100, typeCellW, typeCellH;
+float typeSize = 100, typeCellW, typeCellH, typeMargin, typeGut;
+int typeCols = 1;
+float[] typeCellAlpha = new float[0]; // per grid cell (row * typeCols + col), for the threshold map
 PImage typeImg;
 int[] typeIdx = new int[0];   // pixel index of every inked letter pixel
 byte[] typeThr = new byte[0]; // its erosion threshold: visible while threshold > erosion
+byte[] typeA = new byte[0];   // its alpha (the letter's own opacity times the ink's)
 int lastErosionKey = -1;
 
 // Ink per edition - sits under the figure, so it's a strong colour rather than a pale one.
@@ -257,6 +264,10 @@ void buildTypeGrid() {
   typeCellH = (H - 2 * m - (S.rows - 1) * gut) / S.rows;
   int cols = max(1, round((W - 2 * m + gut) / (typeCellH + gut)));
   typeCellW = (W - 2 * m - (cols - 1) * gut) / cols;
+  typeCols = cols;
+  typeMargin = m;
+  typeGut = gut;
+  typeCellAlpha = new float[S.rows * cols];
 
   // Its own generator, seeded by piece seed AND edition, so each piece gets a different stream of CTAs
   // even though all six share one seed - and the garden's random() stream is left untouched.
@@ -280,7 +291,9 @@ void buildTypeGrid() {
       int rot = S.rotateCells ? rng.nextInt(4) : 0;
       float cx = m + c * (typeCellW + gut) + typeCellW * 0.5;
       float cy = m + r * (typeCellH + gut) + typeCellH * 0.5;
-      typeCells.add(new TypeCell(cx, cy, letter, rot));
+      float alpha = typeAlphaMin + rng.nextFloat() * (typeAlphaMax - typeAlphaMin);
+      typeCellAlpha[r * cols + c] = alpha;
+      typeCells.add(new TypeCell(cx, cy, letter, rot, alpha));
     }
   }
   if (typeCells.isEmpty()) return;
@@ -293,7 +306,7 @@ void buildTypeGrid() {
   for (TypeCell tc : typeCells) widest = max(widest, textWidth(tc.ch) / 100);
   float boxW = S.rotateCells ? min(typeCellW, typeCellH) : typeCellW;
   float boxH = S.rotateCells ? min(typeCellW, typeCellH) : typeCellH;
-  typeSize = min(boxH * 0.9 / CAP_HEIGHT, boxW * 0.92 / max(0.01, widest));
+  typeSize = min(boxH * 0.9 / CAP_HEIGHT, boxW * 0.92 / max(0.01, widest)) * typeLetterScale;
 
   // Vines rooted on the letter outlines - the same edge seeding the background contours use, run on the
   // type instead, so the meadow visibly grows out of the words before the words wear away.
@@ -337,6 +350,7 @@ void buildTypeMap() {
   typeImg = createImage(w, h, ARGB);
   typeIdx = new int[0];
   typeThr = new byte[0];
+  typeA = new byte[0];
   lastErosionKey = -1;
   if (typeCells.isEmpty()) return;
 
@@ -403,6 +417,8 @@ void buildTypeMap() {
   float dMax = typeSize * 0.09 * layerScale * 3;
   typeIdx = new int[count];
   typeThr = new byte[count];
+  typeA = new byte[count];
+  float inkAlpha = (typeInk >>> 24) / 255.0;
   int k = 0;
   for (int y = 0; y < bh; y++) {
     for (int x = 0; x < bw; x++) {
@@ -419,6 +435,11 @@ void buildTypeMap() {
         float dn = min(1, di / dMax);
         thr = 0.06 + 0.94 * (0.42 * n1 + 0.28 * n2 + 0.3 * dn);
       }
+      // which grid cell this pixel's letter sits in - letters stay inside their cells, so the cell
+      // under a pixel is its letter, and its opacity comes from there
+      int cc = constrain(floor((lx - typeMargin) / (typeCellW + typeGut)), 0, typeCols - 1);
+      int cr = constrain(floor((ly - typeMargin) / (typeCellH + typeGut)), 0, S.rows - 1);
+      typeA[k] = (byte) constrain(round(typeCellAlpha[cr * typeCols + cc] * inkAlpha * 255), 0, 255);
       typeIdx[k] = (x0 + x) + (y0 + y) * w;
       typeThr[k] = (byte) constrain(round(thr * 255), 0, 255);
       k++;
@@ -431,9 +452,9 @@ void updateTypeImage() {
   if (ek == lastErosionKey) return;
   lastErosionKey = ek;
   int[] px = typeImg.pixels;
-  int ink = typeInk;
+  int rgb = typeInk & 0xFFFFFF;
   for (int k = 0; k < typeIdx.length; k++) {
-    px[typeIdx[k]] = (typeThr[k] & 0xFF) > ek ? ink : 0;
+    px[typeIdx[k]] = (typeThr[k] & 0xFF) > ek ? ((typeA[k] & 0xFF) << 24) | rgb : 0;
   }
   typeImg.updatePixels();
 }

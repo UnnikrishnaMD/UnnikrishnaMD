@@ -11,7 +11,7 @@ exact pixel size.
 
 Each piece is one edition of the same system: the figure starts bare, the meadow grows in patch by
 patch (outline vines first, then vines on the letters, contours, main grid, meadow) and sprawls out
-sideways around the figure, while a field of letters filling the whole canvas behind it - one
+in swathes along a flow field, rising from the bottom of the canvas and around the figure, while a field of letters filling the whole canvas behind it - one
 continuous stream of the sketch's own advertising calls to action, spaces removed, one letter per cell
 - erodes into abstract letter fragments. Billboards and
 drifting coins arrive late in the growth. Each piece crossfades into the next, and the last crossfades
@@ -67,7 +67,8 @@ All in `occupy_garden.pde`:
   NODE's pixel map gives no safe area, so the 240 px (wall) / 80 px (pool) margin is our own choice.
 
 In `Compositor.pde`: `typeFontNames` (system sans-serifs tried in order — Helvetica Neue first), `typeCellFill`
-(1 = every cell has a letter), `erosionEnd`, `growthSpread`, and the ink colour per edition in `typeInkFor()`. The CTA vocabulary itself is the
+(1 = every cell has a letter), `typeLetterScale` (letter size within its cell), `typeAlphaMin` /
+`typeAlphaMax` (the range of per-letter opacity), `erosionEnd`, `growthSpread`, and the ink colour per edition in `typeInkFor()`. The CTA vocabulary itself is the
 `cta*` lists in `Garden.pde`.
 
 ## Render time and memory

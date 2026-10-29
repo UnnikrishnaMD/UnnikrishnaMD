@@ -192,7 +192,7 @@ void buildAll() {
   buildBodyContourPlants();
   buildContourPlants();
   buildFillerPlants();
-  spreadAroundFigure();
+  flowMeadow();
   buildConsumerLayer();
   buildTypeGrid();
   printSpeciesCounts();
@@ -862,12 +862,33 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
   return p;
 }
 
-// NODE: the growth near and around the figure sprawls out to the sides instead of mostly shooting
-// straight up. Every plant rooted over the drawing (fading out over ~220 logical px beyond its left/right
-// edges) starts its stem leaning left or right - well toward horizontal - and grows a little longer, so
-// the meadow spreads sideways around the body. Side and lean come from a hash, not random(), so the
-// layout is unchanged; vines deliberately aimed onto the body (canCrossBody) keep their heading.
-void spreadAroundFigure() {
+// NODE: the meadow flows. Three passes, all hash/noise-driven (no random()), so they never shift the
+// rest of the layout:
+//  1. The dense growth rooted inside the drawing used to stop at the drawing's rectangle, reading as a
+//     square block of plants. Plants in the main grid and on the background contours now thin out
+//     towards that rectangle's edges along an irregular, noise-shaped margin, so the thicket's outline
+//     is organic instead of a box.
+//  2. Every plant (except vines deliberately aimed onto the body) starts its stem leaning along one
+//     smooth flow field - neighbouring plants lean the same way, so whole swathes sweep left or right
+//     like wind through grass, around the figure and across the canvas, instead of standing straight up.
+//  3. The meadow at the bottom of the canvas grows taller, so the growth rises from the ground and
+//     washes up around the figure rather than sitting as a band of short grass.
+void flowMeadow() {
+  float rx0 = srcPlace[0], ry0 = srcPlace[1], rx1 = srcPlace[0] + srcPlace[2], ry1 = srcPlace[1] + srcPlace[3];
+  float fade = 0.24 * min(srcPlace[2], srcPlace[3]);
+  for (int li = 0; li < 2; li++) {
+    ArrayList<Plant> list = li == 0 ? plants : contourPlants;
+    for (int i = list.size() - 1; i >= 0; i--) {
+      Plant p = list.get(i);
+      PVector r = p.path.get(0);
+      float inside = min(min(r.x - rx0, rx1 - r.x), min(r.y - ry0, ry1 - r.y)); // distance in from the nearest edge
+      float wobble = (noise(r.x * 0.004 + 6100, r.y * 0.004 + 6100) - 0.5) * fade * 1.4;
+      float keep = constrain((inside + wobble) / fade, 0, 1);
+      keep = keep * keep * (3 - 2 * keep);
+      if (hashUnit(p.varietySeed, 601) > keep) list.remove(i);
+    }
+  }
+
   ArrayList<Plant> all = new ArrayList<Plant>();
   all.addAll(plants);
   all.addAll(contourPlants);
@@ -876,12 +897,15 @@ void spreadAroundFigure() {
   for (Plant p : all) {
     if (p.canCrossBody) continue;
     PVector root = p.path.get(0);
-    float near = 1 - constrain(max(srcPlace[0] - root.x, root.x - (srcPlace[0] + srcPlace[2])) / 220.0, 0, 1);
-    if (near <= 0) continue;
-    float side = hashUnit(p.varietySeed, 503) < 0.5 ? -1 : 1;
-    float lean = lerp(0.75, 1.3, hashUnit(p.varietySeed, 509)) * near; // radians away from straight up
-    p.heading = -HALF_PI + side * lean;
-    p.maxSteps = int(p.maxSteps * (1 + 0.35 * near));
+    // flow direction: a low-frequency noise field mapped to a lean of up to ~1.3 rad either side of
+    // straight up, plus a small per-plant variation so a swathe isn't perfectly uniform
+    float f = constrain((noise(root.x * 0.0016 + 7000, root.y * 0.0016 + 7000) - 0.3) / 0.4, 0, 1);
+    float lean = (f * 2 - 1) * 1.3 + (hashUnit(p.varietySeed, 509) - 0.5) * 0.35;
+    p.heading = -HALF_PI + constrain(lean, -1.35, 1.35);
+    float t = constrain(root.y / (float) H, 0, 1);
+    float rise = constrain((t - 0.55) / 0.45, 0, 1);
+    if (p.isFiller) p.maxSteps = int(p.maxSteps * (1 + 0.9 * rise * rise));
+    else p.maxSteps = int(p.maxSteps * 1.25);
   }
 }
 
