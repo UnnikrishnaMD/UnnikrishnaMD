@@ -24,7 +24,7 @@ FfmpegPipe ffmpeg;
 // when a low-frequency noise field over its root position says so, and spreads its own steps over the
 // rest of the window. The meadow fills in patch by patch and everything is fully grown exactly when the
 // hold begins. The timing uses noise(), not random(), so the layout is the same as without it.
-float[] growthDelay = { 0.0, 0.06, 0.12, 0.2, 0.3 }; // fraction of growSeconds before each group starts
+float[] growthDelay = { 0.0, 0.06, 0.12, 0.2, 0.3, 0.22 }; // fraction of growSeconds before each group starts (last: the sharp overlay vines)
 float growthSpread = 0.55; // how late in its group's window a plant may start (0 = all together)
 
 ArrayList<Plant> growthList(int i) {
@@ -33,7 +33,8 @@ ArrayList<Plant> growthList(int i) {
     case 1: return typePlants;
     case 2: return contourPlants;
     case 3: return plants;
-    default: return fillerPlants;
+    case 4: return fillerPlants;
+    default: return overlayVines;
   }
 }
 
@@ -74,14 +75,15 @@ void forceAllGrown() {
 // ---------- Type erosion schedule ----------
 // Legible at the start of each piece, then eaten away from the edges inward while the plants take over,
 // ending as scattered abstract fragments - only the figure stays whole.
-float erosionStart = 0.1;  // fraction of growSeconds before erosion begins
-float erosionEnd = 0.66;   // how far it gets by the end of the hold (1 = nothing left; ~0.66 leaves abstract letter fragments)
+float erosionStart = 0.2;  // fraction of growSeconds before erosion begins - the letters read first
+float erosionEnd = 0.72;   // how far it gets by the end of the hold (1 = nothing left; ~0.7 leaves abstract letter fragments)
 
 float erosionAt(float t) {
   float t0 = S.growSeconds * erosionStart;
   float t1 = pieceDuration();
   float u = constrain((t - t0) / max(0.001, t1 - t0), 0, 1);
-  return erosionEnd * u * u * (3 - 2 * u); // smoothstep - slow to start, slow to settle
+  u = pow(u, 1.35);
+  return erosionEnd * u * u * (3 - 2 * u); // slow to start, slow to settle - a gradual turn from letters to forms
 }
 
 // ---------------- Layer building ----------------
@@ -153,6 +155,7 @@ void drawPlantsWithDepthOfField(PGraphics f) {
   if (midLayer == null || midLayer.width != f.width || midLayer.height != f.height) midLayer = createGraphics(f.width, f.height);
   ArrayList<Plant> all = depthSortedAllPlants();
   java.util.HashSet<Plant> sharp = new java.util.HashSet<Plant>(bodyContourPlants); // the figure's own vines are in focus
+  sharp.addAll(overlayVines); // and the overlay vines laced over the blurred meadow and the curls
   float px = f.width / (float) S.outW; // blur radii are given at output size; scale them for previews
 
   farLayer.beginDraw();
@@ -337,6 +340,8 @@ PFont typeFont;
 float typeSize = 100, typeCellW, typeCellH, typeMargin, typeGut;
 int typeCols = 1;
 float[] typeCellAlpha = new float[0]; // per grid cell (row * typeCols + col), for the threshold map
+float[] typeCellHold = new float[0];  // per cell: how much longer this letter holds out (stagger - not all letters go at once)
+float[] typeCellCut = new float[0];   // per cell: angle of the edge the letter breaks away from
 PImage typeImg;
 int[] typeIdx = new int[0];   // pixel index of every inked letter pixel
 byte[] typeThr = new byte[0]; // its erosion threshold: visible while threshold > erosion
@@ -370,6 +375,8 @@ void buildTypeGrid() {
   typeMargin = m;
   typeGut = gut;
   typeCellAlpha = new float[S.rows * cols];
+  typeCellHold = new float[S.rows * cols];
+  typeCellCut = new float[S.rows * cols];
 
   // Its own generator, seeded by piece seed AND edition, so each piece gets a different stream of CTAs
   // even though all six share one seed - and the garden's random() stream is left untouched.
@@ -395,6 +402,8 @@ void buildTypeGrid() {
       float cy = m + r * (typeCellH + gut) + typeCellH * 0.5;
       float alpha = typeAlphaMin + rng.nextFloat() * (typeAlphaMax - typeAlphaMin);
       typeCellAlpha[r * cols + c] = alpha;
+      typeCellHold[r * cols + c] = rng.nextFloat() * 0.3;
+      typeCellCut[r * cols + c] = rng.nextFloat() * TWO_PI;
       typeCells.add(new TypeCell(cx, cy, letter, rot, alpha));
     }
   }
@@ -535,13 +544,23 @@ void buildTypeMap() {
       float lx = (x0 + x) / layerScale, ly = (y0 + y) / layerScale;
       float grain = noise(lx * 0.4 + 300, ly * 0.4 + 300);
       float thr;
-      if (grain < 0.3) {
+      if (grain < 0.22) {
         thr = 0; // permanent grunge hole
       } else {
         float n1 = constrain((noise(lx * 0.010 + 11, ly * 0.010 + 11) - 0.25) / 0.5, 0, 1);
         float n2 = constrain((noise(lx * 0.045 + 77, ly * 0.045 + 77) - 0.25) / 0.5, 0, 1);
         float dn = min(1, di / dMax);
-        thr = 0.06 + 0.94 * (0.42 * n1 + 0.28 * n2 + 0.3 * dn);
+        // Each letter breaks away from one side (its own random angle), so it turns into a sliced,
+        // abstract shard rather than just speckling out; and each letter holds out for its own extra
+        // time, so the field turns gradually - some letters already abstract while others still read.
+        int ci = constrain(floor((lx - typeMargin) / (typeCellW + typeGut)), 0, typeCols - 1)
+               + constrain(floor((ly - typeMargin) / (typeCellH + typeGut)), 0, S.rows - 1) * typeCols;
+        float ccx = typeMargin + (ci % typeCols) * (typeCellW + typeGut) + typeCellW * 0.5;
+        float ccy = typeMargin + (ci / typeCols) * (typeCellH + typeGut) + typeCellH * 0.5;
+        float a = typeCellCut[ci];
+        float sweep = constrain(((lx - ccx) * cos(a) + (ly - ccy) * sin(a)) / (typeSize * 0.7) + 0.5, 0, 1);
+        float base = 0.3 * n1 + 0.18 * n2 + 0.22 * dn + 0.3 * sweep;
+        thr = 0.06 + 0.94 * constrain(base * 0.78 + typeCellHold[ci], 0, 1);
       }
       // which grid cell this pixel's letter sits in - letters stay inside their cells, so the cell
       // under a pixel is its letter, and its opacity comes from there

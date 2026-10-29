@@ -17,7 +17,8 @@ PGraphics bodyTextureLayer; // soft painterly mottling over the visible body sil
 ArrayList<Plant> plants = new ArrayList<Plant>();             // main plants — rooted outside the human figure
 ArrayList<Plant> contourPlants = new ArrayList<Plant>();      // sparse vines following the background's contours
 ArrayList<Plant> bodyContourPlants = new ArrayList<Plant>();  // vines rooted on the human figure's own silhouette edge
-ArrayList<Plant> fillerPlants = new ArrayList<Plant>();       // meadow filler across empty canvas, sized/hazed by depth
+ArrayList<Plant> fillerPlants = new ArrayList<Plant>();
+ArrayList<Plant> overlayVines = new ArrayList<Plant>(); // NODE: sharp vines laced over the blurred meadow and the curls - see buildOverlayVines       // meadow filler across empty canvas, sized/hazed by depth
 boolean[] bodyMask;  // true where a srcImg pixel belongs to the human figure — kept clear of plant roots
 
 // ---------- Color control state ----------
@@ -125,6 +126,7 @@ ArrayList<Plant> depthSortedAllPlants() {
   all.addAll(bodyContourPlants);
   all.addAll(contourPlants);
   all.addAll(typePlants); // NODE: vines rooted on the type grid
+  all.addAll(overlayVines);
   all.sort(new java.util.Comparator<Plant>() {
     public int compare(Plant a, Plant b) {
       return Float.compare(a.path.get(0).y, b.path.get(0).y);
@@ -194,6 +196,7 @@ void buildAll() {
   buildFillerPlants();
   buildCentralGrowth();
   flowMeadow();
+  buildOverlayVines();
   buildConsumerLayer();
   buildTypeGrid();
   printSpeciesCounts();
@@ -1017,6 +1020,69 @@ void buildCentralGrowth() {
     }
   }
   println("Central growth: " + added + "  Foreground edge: " + edge);
+}
+
+// NODE: overlay vines - sharp, in-focus growth laced over the soft (blurred) meadow and the curl
+// decoration, all rooted on the ground:
+//  - across the whole width, tall vines from the foreground band climb up in front of the blurred
+//    distance, in random patches (a noise field decides where), so the soft meadow is crossed here and
+//    there by crisp stems instead of reading as one uniform blurred zone;
+//  - across the drawing, vines rooted just below the horizon climb up through the curl decoration
+//    above the body (stopping at the body itself) to ragged heights near the top edge, so the curls'
+//    block outline disappears into the growth.
+// Forefront meadow flowers more, and bigger, here too.
+void buildOverlayVines() {
+  overlayVines.clear();
+  float horizonY = H * skyBand;
+  // in front of the blurred distance
+  for (float gx = -10; gx < W + 10; gx += 16) {
+    float px = gx + random(-7, 7), py = H * random(0.82, 1.02);
+    if (noise(px * 0.004 + 9100, 31) < 0.5) continue; // patches
+    int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
+    if (isBody(sx, sy)) continue;
+    Plant p = new Plant(px, py, color(90, 160, 120), hashUnit(int(px * 13), 3) < 0.5);
+    float d = 1.15;
+    p.depth = d;
+    p.stepLen *= d * 1.6;
+    p.sizeScale = random(0.75, 1.15);
+    p.wildness = random(1.6, 2.4);
+    float topY = lerp(horizonY - H * 0.05, H * 0.55, random(1));
+    p.maxSteps = int((py - topY) / (p.stepLen * 0.75));
+    p.hasFlower = random(1) < 0.7;
+    if (random(1) < 0.5) p.foliageAccent = int(random(floralPalette.length));
+    overlayVines.add(p);
+  }
+  // up through the curls
+  // Where the body stands between the ground and the curls, these vines are allowed to climb over it
+  // (in front of the chest and the raised arm) to reach them - except straight up from the face.
+  float faceX0 = srcPlace[0] + faceZoneX0 * srcPlace[4], faceX1 = srcPlace[0] + faceZoneX1 * srcPlace[4];
+  for (float gx = srcPlace[0]; gx < srcPlace[0] + srcPlace[2]; gx += 4) {
+    float px = gx + random(-3, 3), py = horizonY + random(0, H * 0.12);
+    if (noise(px * 0.01 + 9300, 57) < 0.3) continue; // random cover, not an even curtain
+    int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
+    if (isBody(sx, sy)) continue;
+    Plant p = new Plant(px, py, color(90, 160, 120), random(1) < 0.6);
+    p.canCrossBody = (px < faceX0 || px > faceX1) && random(1) < 0.75;
+    p.depth = 0.8;
+    p.stepLen *= 0.9;
+    p.sizeScale = random(0.6, 0.95);
+    p.wildness = random(1.8, 2.6);
+    float topY = lerp(H * 0.02, srcPlace[1] + srcPlace[3] * 0.2, random(1)); // ragged tops near the top edge
+    p.maxSteps = int((py - topY) / (p.stepLen * 0.7));
+    p.hasFlower = random(1) < 0.6;
+    if (random(1) < 0.5) p.foliageAccent = int(random(floralPalette.length));
+    overlayVines.add(p);
+  }
+  // forefront flowers: the front of the meadow blooms much more, and bigger - near the viewer, not just
+  // along the body
+  for (Plant p : fillerPlants) {
+    float u = constrain((p.path.get(0).y / H - skyBand) / (1 - skyBand), 0, 1);
+    if (u > 0.6) {
+      if (hashUnit(p.varietySeed, 1013) < 0.85) p.hasFlower = true;
+      p.flowerSize *= lerp(1, 1.45, (u - 0.6) / 0.4);
+    }
+  }
+  println("Overlay vines: " + overlayVines.size());
 }
 
 // NODE: foreshortening and aerial perspective. A plant's size on screen follows how far down the canvas
