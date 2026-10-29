@@ -26,10 +26,11 @@ class Surface {
   float figureScale, figureOffsetX, figureOffsetY; // figure placement; offsets as a fraction of the logical canvas
   boolean rotateCells;     // pools are (probably) seen from above - letters face every direction, no single "up"
   float growSeconds, holdSeconds;
+  float skyBand;           // top fraction of the canvas kept as open sky (sparse growth)
 
   Surface(String name, int outW, int outH, int W, int H, float margin, float gutter, int cols, int rows,
           int[] playlist, float figureScale, float figureOffsetX, float figureOffsetY, boolean rotateCells,
-          float growSeconds, float holdSeconds) {
+          float growSeconds, float holdSeconds, float skyBand) {
     this.name = name;
     this.outW = outW;
     this.outH = outH;
@@ -46,6 +47,7 @@ class Surface {
     this.rotateCells = rotateCells;
     this.growSeconds = growSeconds;
     this.holdSeconds = holdSeconds;
+    this.skyBand = skyBand;
   }
 
   float outScale() { return outW / (float) W; } // output pixels per logical pixel
@@ -57,11 +59,12 @@ class Surface {
 // gutters - 38 x 8 letters on the wall (~190px cells); 11 x 11 letters with 18px gutters on each
 // pool (~115px cells).
 // Wall timing: 6 pieces x (18s grow + 6s hold) = 2:24, which keeps the master well inside 500 MB at 8640px.
-// The pools play three pieces each, slower, since their files are small.
+// The pools play three pieces each, slower, since their files are small, and keep only a thin band of
+// open sky (0.1 of the height, vs 0.28 on the wall) so the growth reaches higher up the square.
 Surface[] SURFACES = {
-  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 0, 8, new int[]{0, 1, 2, 3, 4, 5}, 0.92, 0,     0.02, false, 18, 6),
-  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
-  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
+  new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 0, 8, new int[]{0, 1, 2, 3, 4, 5}, 0.92, 0,     0.02, false, 18, 6, 0.28),
+  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10, 0.1),
+  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10, 0.1)
 };
 
 // ---------- The six pieces ----------
@@ -122,6 +125,7 @@ void settings() {
   S = surfaceByName(surfaceName);
   W = S.W;
   H = S.H;
+  skyBand = S.skyBand;
   previewScale = min(1, min(1800.0 / S.outW, 900.0 / S.outH));
   size(max(200, round(S.outW * previewScale)), max(200, round(S.outH * previewScale)));
 }

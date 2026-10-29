@@ -591,6 +591,7 @@ void buildBodyTextureLayer() {
 // Side effect: lastAboveDist holds the pixel distance to the first body hit (999 if none), so
 // callers can grow a plant up to just below the figure without ever reaching it.
 int lastAboveDist = 999;
+float skyBand = 0.28; // NODE: set from the surface - top fraction of the canvas kept as open sky
 
 int regionAbove(int x, int y) {
   lastAboveDist = 999;
@@ -635,7 +636,7 @@ void buildPlants() {
       float t = constrain(cy / (float) H, 0, 1); // 0 = far (top), 1 = near (bottom)
       // The upper canvas is sky, not distant meadow - thin it hard so it actually reads as open air
       // rather than the same growth just scaled small.
-      if (t < 0.28 && random(1) < 0.88) continue;
+      if (t < skyBand && random(1) < 0.88) continue; // NODE: skyBand per surface (was 0.28) - lower on the pools so growth reaches higher
       color hazed = lerpColor(c, color(255), max(0, 1 - t) * 0.4);
       // The sparse top/sky band gets a deliberate lift in purple-species odds - with so few plants
       // surviving the sky-thinning above, purple's normal ~10% share of the pool rarely showed up
@@ -690,6 +691,7 @@ void buildBodyContourPlants() {
     if (inFace && random(1) < 0.2) continue;
     Plant p = new Plant(cx, cy, c, true);
     p.sizeScale = random(0.55, 0.95);       // sturdier than a background creeper, so it reads on the figure
+    p.inwardAngle = v.z; // NODE: kept so flowMeadow() can send more of these onto the body in patches
     p.maxSteps = inFace ? int(random(12, 30)) : int(random(45, 110));
     // Only a small, deliberate fraction of boundary vines are actually permitted to creep onto the
     // body at all (canCrossBody - grow() enforces this as a hard wall for everyone else). This is
@@ -805,7 +807,7 @@ void buildFillerPlants() {
       // and opens up bare ground between clumps, not just fades in color, so depth of field reads.
       float density = lerp(0.22, 0.8, clump);
       if (t > 0.78) density = lerp(0.55, 1.1, clump); // fuller up front, still clumped
-      else if (t < 0.35) density = lerp(0.03, 0.22, clump); // far meadow should visibly thin toward the horizon
+      else if (t < skyBand + 0.07) density = lerp(0.03, 0.22, clump); // far meadow should visibly thin toward the horizon (NODE: was t < 0.35)
       // NODE: beyond the drawing's left/right edges there are no swirls for contour vines to root on,
       // so on the wide wall the meadow there read as thin grass beside a dense thicket. `open` ramps
       // from 0 at the drawing's edge to 1 a short way out (no hard seam), and thickens, lengthens and
@@ -858,20 +860,23 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
   // decoration - so the foreground reads as the same growth as the figure's, not a separate ochre field.
   // Chosen by hash, not random(), so the layout itself is unchanged.
   p.toneOverride = hashUnit(p.varietySeed, 401) < 0.5 ? GREEN_CERULEAN : GREEN_FRESH;
-  p.usesAccentColor = true;
+  p.usesAccentColor = hashUnit(p.varietySeed, 409) < 0.5; // NODE: half the drawing's own swirl colours, half the full floral palette
   return p;
 }
 
-// NODE: the meadow flows. Three passes, all hash/noise-driven (no random()), so they never shift the
+// NODE: the meadow grows wild. Four passes, all hash/noise-driven (no random()), so they never shift the
 // rest of the layout:
 //  1. The dense growth rooted inside the drawing used to stop at the drawing's rectangle, reading as a
 //     square block of plants. Plants in the main grid and on the background contours now thin out
 //     towards that rectangle's edges along an irregular, noise-shaped margin, so the thicket's outline
 //     is organic instead of a box.
-//  2. Every plant (except vines deliberately aimed onto the body) starts its stem leaning along one
-//     smooth flow field - neighbouring plants lean the same way, so whole swathes sweep left or right
-//     like wind through grass, around the figure and across the canvas, instead of standing straight up.
-//  3. The meadow at the bottom of the canvas grows taller, so the growth rises from the ground and
+//  2. More of the vines on the figure's outline creep onto the body, in random patches along its
+//     contours, so the figure is covered here and there rather than evenly or not at all.
+//  3. Growth is wild and upward: every stem wanders about twice as much as its species alone would, and
+//     each plant gets its own independent tilt either side of straight up - no shared direction, so the
+//     meadow never leans one way across the canvas. More and larger blooms, and 40% of the plants
+//     carry coloured foliage.
+//  4. The meadow at the bottom of the canvas grows taller, so the growth rises from the ground and
 //     washes up around the figure rather than sitting as a band of short grass.
 void flowMeadow() {
   float rx0 = srcPlace[0], ry0 = srcPlace[1], rx1 = srcPlace[0] + srcPlace[2], ry1 = srcPlace[1] + srcPlace[3];
@@ -889,21 +894,41 @@ void flowMeadow() {
     }
   }
 
+  // Silhouette vines: more of them creep onto the body, in random patches (a coarse noise field over
+  // the outline decides where), so the figure gets covered here and there along its own contours
+  // while other stretches stay clear. The face keeps its lighter protection.
+  for (Plant p : bodyContourPlants) {
+    if (p.canCrossBody) continue;
+    PVector r = p.path.get(0);
+    int sx = int((r.x - srcPlace[0]) / srcPlace[4]), sy = int((r.y - srcPlace[1]) / srcPlace[4]);
+    boolean inFace = sx >= faceZoneX0 && sx <= faceZoneX1 && sy >= faceZoneY0 && sy <= faceZoneY1;
+    float patch = noise(r.x * 0.008 + 8300, r.y * 0.008 + 8300);
+    if (!inFace && patch > 0.52 && hashUnit(p.varietySeed, 701) < 0.7) {
+      p.canCrossBody = true;
+      p.heading = p.inwardAngle + (hashUnit(p.varietySeed, 709) - 0.5) * 0.6;
+      p.maxSteps = int(p.maxSteps * 1.2);
+    }
+  }
+
   ArrayList<Plant> all = new ArrayList<Plant>();
   all.addAll(plants);
   all.addAll(contourPlants);
   all.addAll(bodyContourPlants);
   all.addAll(fillerPlants);
+  float riseStart = skyBand + 0.27; // where the meadow starts growing taller towards the bottom
   for (Plant p : all) {
-    if (p.canCrossBody) continue;
+    // Wild: every stem wanders about twice as much as its species alone would.
+    p.wildness = 1.7 + hashUnit(p.varietySeed, 517) * 0.8;
+    // Colour: ~40% more and ~25% larger blooms, and 40% of the plants with coloured foliage.
+    if (!p.hasFlower && hashUnit(p.varietySeed, 521) < 0.4) p.hasFlower = true;
+    p.flowerSize *= 1.25; // bigger blooms, so the colour reads at wall scale, not only up close
+    if (hashUnit(p.varietySeed, 523) < 0.4) p.foliageAccent = int(hashUnit(p.varietySeed, 527) * floralPalette.length) % floralPalette.length;
+    if (p.canCrossBody) continue; // aimed onto the body on purpose - keep that heading
     PVector root = p.path.get(0);
-    // flow direction: a low-frequency noise field mapped to a lean of up to ~1.3 rad either side of
-    // straight up, plus a small per-plant variation so a swathe isn't perfectly uniform
-    float f = constrain((noise(root.x * 0.0016 + 7000, root.y * 0.0016 + 7000) - 0.3) / 0.4, 0, 1);
-    float lean = (f * 2 - 1) * 1.3 + (hashUnit(p.varietySeed, 509) - 0.5) * 0.35;
-    p.heading = -HALF_PI + constrain(lean, -1.35, 1.35);
+    // Up, not all one way: each plant gets its own independent tilt either side of straight up.
+    p.heading = -HALF_PI + (hashUnit(p.varietySeed, 509) - 0.5) * 1.1;
     float t = constrain(root.y / (float) H, 0, 1);
-    float rise = constrain((t - 0.55) / 0.45, 0, 1);
+    float rise = constrain((t - riseStart) / (1 - riseStart), 0, 1);
     if (p.isFiller) p.maxSteps = int(p.maxSteps * (1 + 0.9 * rise * rise));
     else p.maxSteps = int(p.maxSteps * 1.25);
   }
@@ -1050,6 +1075,9 @@ class Plant {
   float growStart; // NODE: when this plant starts within its group's growth window (see setupGrowth)
   int growCalls;   // NODE: grow() calls made so far by the growth schedule
   int toneOverride = -1; // NODE: foliage tone (naturalGreens index) used instead of the species' own; -1 = species tone
+  float wildness = 1;     // NODE: multiplies the species' curl - how much this stem wanders as it grows
+  int foliageAccent = -1; // NODE: floralPalette index this plant's leaves lean towards (-1 = plain green foliage)
+  float inwardAngle = 0;  // NODE: for silhouette vines, the direction pointing into the body
 
   Plant(float x, float y, color imgCol, boolean creeping) {
     this(x, y, imgCol, creeping, pickSpecies(creeping));
@@ -1083,7 +1111,7 @@ class Plant {
     Species sp = SPECIES[speciesIndex];
     if (!grown) {
       float n = noise(noiseOff);
-      heading += map(n, 0, 1, -0.12, 0.12) * sp.curlMul;      // gentle curling, vine-like - species-scaled
+      heading += map(n, 0, 1, -0.12, 0.12) * sp.curlMul * wildness; // gentle curling, vine-like - species-scaled (NODE: x per-plant wildness)
       heading = constrain(heading, -PI * 0.95, -PI * 0.05); // keep it swaying within an upward cone
       noiseOff += 0.015;
 
@@ -1116,7 +1144,9 @@ class Plant {
             br.canBranch = false;
             br.canCrossBody = canCrossBody; // inherit - a branch off a body-permitted vine may also touch it
             br.toneOverride = toneOverride; // NODE: a branch keeps its parent's foliage tone
-            if (isFiller) br.usesAccentColor = true; // NODE: and a meadow branch's bloom keeps the artwork's colours
+            br.wildness = wildness;
+            br.foliageAccent = foliageAccent;
+            if (isFiller) br.usesAccentColor = usesAccentColor; // NODE: and a meadow branch's bloom keeps its parent's colour source
             br.heading = leafAngle;
             br.sizeScale = sizeScale * random(0.45, 0.65);
             br.maxSteps = int(maxSteps * random(0.3, 0.55));
@@ -1771,7 +1801,11 @@ color stemColor(Plant p) {
 color leafColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot + 777);
   PVector root = p.path.get(0);
-  return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.9))), root.x, root.y);
+  color lc = localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.9))), root.x, root.y);
+  // NODE: about 40% of the plants carry coloured foliage - their leaves lean towards a vivid bloom
+  // colour (pink, violet, coral, turquoise, gold...) instead of staying green; stems stay green.
+  if (p.foliageAccent >= 0) lc = lerpColor(lc, editionTint(floralPalette[p.foliageAccent]), 0.78);
+  return lc;
 }
 
 // ---------------- Edition flora identity ----------------
@@ -2020,8 +2054,8 @@ color flowerColor(Plant p) {
     c = floralPalette[p.varietySeed % floralPalette.length];
   }
   float[] hsb = Color.RGBtoHSB((int) red(c), (int) green(c), (int) blue(c), null);
-  float s = max(hsb[1], 0.5);
-  float b = max(hsb[2], 0.6);
+  float s = max(hsb[1], 0.68); // NODE: floors raised (0.5 / 0.6) - more saturated, brighter blooms
+  float b = max(hsb[2], 0.74);
   int rgb = Color.HSBtoRGB(hsb[0], s, b);
   return editionTint(color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
 }
