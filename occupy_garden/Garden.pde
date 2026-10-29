@@ -874,8 +874,8 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
 //     contours, so the figure is covered here and there rather than evenly or not at all.
 //  3. Growth is wild and upward: every stem wanders about twice as much as its species alone would, and
 //     each plant gets its own independent tilt either side of straight up - no shared direction, so the
-//     meadow never leans one way across the canvas. More and larger blooms, and 40% of the plants
-//     carry coloured foliage.
+//     meadow never leans one way across the canvas. More and larger blooms, and half the plants
+//     are coloured - stems and leaves.
 //  4. The meadow at the bottom of the canvas grows taller, so the growth rises from the ground and
 //     washes up around the figure rather than sitting as a band of short grass.
 void flowMeadow() {
@@ -919,10 +919,10 @@ void flowMeadow() {
   for (Plant p : all) {
     // Wild: every stem wanders about twice as much as its species alone would.
     p.wildness = 1.7 + hashUnit(p.varietySeed, 517) * 0.8;
-    // Colour: ~40% more and ~25% larger blooms, and 40% of the plants with coloured foliage.
+    // Colour: ~40% more and ~25% larger blooms, and half the plants coloured, stems and leaves.
     if (!p.hasFlower && hashUnit(p.varietySeed, 521) < 0.4) p.hasFlower = true;
     p.flowerSize *= 1.25; // bigger blooms, so the colour reads at wall scale, not only up close
-    if (hashUnit(p.varietySeed, 523) < 0.4) p.foliageAccent = int(hashUnit(p.varietySeed, 527) * floralPalette.length) % floralPalette.length;
+    if (hashUnit(p.varietySeed, 523) < 0.5) p.foliageAccent = int(hashUnit(p.varietySeed, 527) * floralPalette.length) % floralPalette.length;
     if (p.canCrossBody) continue; // aimed onto the body on purpose - keep that heading
     PVector root = p.path.get(0);
     // Up, not all one way: each plant gets its own independent tilt either side of straight up.
@@ -1796,13 +1796,17 @@ int foliageTone(Plant p) {
 color stemColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot);
   PVector root = p.path.get(0);
-  return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.8))), root.x, root.y);
+  color sc = localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.8))), root.x, root.y);
+  // NODE: a colourful plant's stem takes its colour too (a little less strongly than its leaves, so stem
+  // and leaf still read apart) - the whole plant is coloured, not just green stems with coloured leaves.
+  if (p.foliageAccent >= 0) sc = lerpColor(sc, editionTint(floralPalette[p.foliageAccent]), 0.65);
+  return sc;
 }
 color leafColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot + 777);
   PVector root = p.path.get(0);
   color lc = localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.9))), root.x, root.y);
-  // NODE: about 40% of the plants carry coloured foliage - their leaves lean towards a vivid bloom
+  // NODE: half the plants carry coloured foliage - their leaves lean towards a vivid bloom
   // colour (pink, violet, coral, turquoise, gold...) instead of staying green; stems stay green.
   if (p.foliageAccent >= 0) lc = lerpColor(lc, editionTint(floralPalette[p.foliageAccent]), 0.78);
   return lc;
