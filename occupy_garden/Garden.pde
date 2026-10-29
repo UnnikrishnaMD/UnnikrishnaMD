@@ -192,6 +192,7 @@ void buildAll() {
   buildBodyContourPlants();
   buildContourPlants();
   buildFillerPlants();
+  buildCentralGrowth();
   flowMeadow();
   buildConsumerLayer();
   buildTypeGrid();
@@ -918,11 +919,11 @@ void flowMeadow() {
     int sx = int((r.x - srcPlace[0]) / srcPlace[4]), sy = int((r.y - srcPlace[1]) / srcPlace[4]);
     boolean inFace = sx >= faceZoneX0 && sx <= faceZoneX1 && sy >= faceZoneY0 && sy <= faceZoneY1;
     float patch = noise(r.x * 0.008 + 8300, r.y * 0.008 + 8300);
-    if (!inFace && patch > 0.44 && hashUnit(p.varietySeed, 701) < 0.85) {
+    if (!inFace && patch > 0.36 && hashUnit(p.varietySeed, 701) < 0.95) {
       p.canCrossBody = true;
       p.heading = p.inwardAngle + (hashUnit(p.varietySeed, 709) - 0.5) * 0.6;
       // they climb up from the body's lower and side edges, so they need the length to get over it
-      p.maxSteps = int(p.maxSteps * 1.9);
+      p.maxSteps = int(p.maxSteps * 2.4);
     }
   }
 
@@ -952,16 +953,54 @@ void flowMeadow() {
   applyDepth(fillerPlants, true);
   applyDepth(contourPlants, false);
   applyDepth(bodyContourPlants, false);
+
+  // Tall risers through the centre: across the drawing's width, a share of the ground plants grow tall
+  // enough to climb up through the curl decoration to just below the top edge - longer strides rather
+  // than ever more steps, so they stay a reasonable number of segments. Heights vary, so the tops form a
+  // ragged canopy rather than a line.
+  float topY = H * 0.04;
+  for (ArrayList<Plant> list : new ArrayList[]{ plants, contourPlants, fillerPlants }) {
+    for (Plant p : list) {
+      PVector r = p.path.get(0);
+      if (r.x < srcPlace[0] || r.x > srcPlace[0] + srcPlace[2]) continue;
+      if (hashUnit(p.varietySeed, 911) > 0.42) continue;
+      p.stepLen *= 1.7;
+      int needed = int((r.y - topY) / (p.stepLen * 0.62) * lerp(0.55, 1.0, hashUnit(p.varietySeed, 919)));
+      p.maxSteps = max(p.maxSteps, min(needed, 650));
+    }
+  }
+}
+
+// NODE: more growth in the centre - underneath and around the body, across the drawing's width, where
+// the original meadow was thinnest. Rooted on the ground (below the horizon), skipping the body itself,
+// in clumps like the rest of the meadow.
+void buildCentralGrowth() {
+  float horizonY = H * skyBand;
+  int added = 0;
+  for (float gy = horizonY + 10; gy < H + 20; gy += 22) {
+    for (float gx = srcPlace[0]; gx < srcPlace[0] + srcPlace[2]; gx += 20) {
+      float px = gx + random(-10, 10), py = gy + random(-10, 10);
+      int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
+      if (isBody(sx, sy)) continue;
+      float clump = noise(px * 0.006 + 2400, py * 0.006 + 2400);
+      if (random(1) > lerp(0.15, 0.75, clump)) continue;
+      int above = regionAbove(sx, sy);
+      float t = constrain(py / (float) H, 0, 1);
+      fillerPlants.add(makeFillerPlant(px, py, t, above));
+      added++;
+    }
+  }
+  println("Central growth: " + added);
 }
 
 // NODE: foreshortening and aerial perspective. A plant's size on screen follows how far down the canvas
-// it roots: about a third of full size just below the horizon, growing smoothly to ~1.5x at the bottom
+// it roots: about a third of full size just below the horizon, growing smoothly to ~1.65x at the bottom
 // edge - its stem length per step (so its height), and for lists that weren't depth-scaled already its
 // leaves, blooms and stroke too. Distant plants also fade towards the haze colour, so the meadow recedes
 // into the distance instead of reading as one flat layer.
 float depthScaleAt(float rootY) {
   float u = constrain((rootY / H - skyBand) / (1 - skyBand), 0, 1); // 0 at the horizon .. 1 at the bottom
-  return lerp(0.32, 1.45, pow(u, 1.15));
+  return lerp(0.3, 1.65, pow(u, 1.2));
 }
 
 void applyDepth(ArrayList<Plant> list, boolean sizeAlreadyDepthScaled) {
@@ -972,7 +1011,7 @@ void applyDepth(ArrayList<Plant> list, boolean sizeAlreadyDepthScaled) {
     p.depth = d;
     p.stepLen *= d;
     if (!sizeAlreadyDepthScaled) p.sizeScale *= d;
-    p.haze = 0.5 * pow(1 - u, 1.6);
+    p.haze = 0.62 * pow(1 - u, 1.4);
   }
 }
 
@@ -1121,7 +1160,8 @@ class Plant {
   int foliageAccent = -1; // NODE: floralPalette index this plant's leaves lean towards (-1 = plain green foliage)
   float inwardAngle = 0;  // NODE: for silhouette vines, the direction pointing into the body
   float depth = 1;        // NODE: perspective scale from where it roots - small near the horizon, large up front
-  float haze = 0;         // NODE: aerial-perspective haze, 0 up front .. ~0.5 near the horizon
+  float haze = 0;         // NODE: aerial-perspective haze, 0 up front .. ~0.6 near the horizon
+  float curlSign = 1;     // NODE: which way this stem's curl turns (+1/-1) - see grow()
 
   Plant(float x, float y, color imgCol, boolean creeping) {
     this(x, y, imgCol, creeping, pickSpecies(creeping));
@@ -1149,13 +1189,27 @@ class Plant {
     usesAccentColor = random(1) < 0.4; // ~40% of flowers pull an accent hue from the swirl decoration instead
     flowerSize = random(8, 15) * (creeping ? 0.7 : 1.0); // small and numerous, not large and few - bright tiny bunches, not oversized graphic blooms
     petalCount = int(random(5, 8));
+    // NODE: half the stems curl one way, half the other. noise() averages slightly below 0.5, so a
+    // single shared curl direction made every stem drift the same way over its length and the whole
+    // meadow lean left; with the sign split, the drift cancels across the meadow. A hash, not random(),
+    // so the layout is unchanged.
+    curlSign = hashUnit(varietySeed, 811) < 0.5 ? -1 : 1;
   }
 
   void grow() {
     Species sp = SPECIES[speciesIndex];
     if (!grown) {
-      float n = noise(noiseOff);
-      heading += map(n, 0, 1, -0.12, 0.12) * sp.curlMul * wildness; // gentle curling, vine-like - species-scaled (NODE: x per-plant wildness)
+      // NODE: the curl is the difference of two noise samples - zero on average, so no stem drifts to one
+      // side over its length (a single noise() sample averages a little under 0.5, which tipped every
+      // long stem over sideways). A gentle pull back towards vertical, like a plant growing towards the
+      // light, keeps the growth going up while it wiggles and curls freely; vines crossing the body get a
+      // much weaker pull so they can still travel across it.
+      float n = noise(noiseOff) - noise(noiseOff + 517.3);
+      // The wander is small per step (noise changes slowly, so a turn persists for many steps) and the
+      // pull strong enough to win over it: a stem swings up to roughly 45 degrees off vertical and back,
+      // rather than turning until it lies flat along the edge of its cone.
+      heading += n * 0.12 * sp.curlMul * wildness * curlSign; // gentle curling, vine-like - species-scaled
+      heading += (-HALF_PI - heading) * (canCrossBody ? 0.03 : 0.06);
       heading = constrain(heading, -PI * 0.95, -PI * 0.05); // keep it swaying within an upward cone
       noiseOff += 0.015;
 

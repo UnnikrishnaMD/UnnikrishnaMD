@@ -127,10 +127,54 @@ void renderPlantsCache() {
   }
   plantsCache.beginDraw();
   plantsCache.clear();
-  plantsCache.scale(layerScale);
-  for (Plant p : depthSortedAllPlants()) p.display(plantsCache);
+  drawPlantsWithDepthOfField(plantsCache);
   plantsCache.endDraw();
   plantsCacheDirty = false;
+}
+
+// ---------- Depth of field ----------
+// The meadow is drawn in three distance bands. The far band is rendered at a quarter of the resolution
+// and the middle band at half, then each is scaled back up - an out-of-focus softness that grows with
+// distance, the way a lens focused on the figure renders the meadow behind it. The near band and every
+// vine on the figure itself stay at full resolution, sharp. (Drawing the far plants smaller is also
+// cheaper, so this costs no render time.)
+float farBand = 0.3, midBand = 0.5;          // depth (0 = horizon .. 1 = bottom edge) where each band ends
+float farResolution = 0.25, midResolution = 0.5;
+PGraphics farLayer, midLayer;
+
+float plantDepthU(Plant p) {
+  return constrain((p.path.get(0).y / H - skyBand) / (1 - skyBand), 0, 1);
+}
+
+void drawPlantsWithDepthOfField(PGraphics f) {
+  int fw = max(1, round(f.width * farResolution)), fh = max(1, round(f.height * farResolution));
+  int mw = max(1, round(f.width * midResolution)), mh = max(1, round(f.height * midResolution));
+  if (farLayer == null || farLayer.width != fw || farLayer.height != fh) farLayer = createGraphics(fw, fh);
+  if (midLayer == null || midLayer.width != mw || midLayer.height != mh) midLayer = createGraphics(mw, mh);
+  ArrayList<Plant> all = depthSortedAllPlants();
+  java.util.HashSet<Plant> sharp = new java.util.HashSet<Plant>(bodyContourPlants); // the figure's own vines are in focus
+
+  farLayer.beginDraw();
+  farLayer.clear();
+  farLayer.scale(layerScale * farResolution);
+  for (Plant p : all) if (!sharp.contains(p) && plantDepthU(p) < farBand) p.display(farLayer);
+  farLayer.endDraw();
+
+  midLayer.beginDraw();
+  midLayer.clear();
+  midLayer.scale(layerScale * midResolution);
+  for (Plant p : all) {
+    float u = plantDepthU(p);
+    if (!sharp.contains(p) && u >= farBand && u < midBand) p.display(midLayer);
+  }
+  midLayer.endDraw();
+
+  f.image(farLayer, 0, 0, f.width, f.height);
+  f.image(midLayer, 0, 0, f.width, f.height);
+  f.pushMatrix();
+  f.scale(layerScale);
+  for (Plant p : all) if (sharp.contains(p) || plantDepthU(p) >= midBand) p.display(f);
+  f.popMatrix();
 }
 
 void composeFrame(PGraphics f) {
@@ -143,10 +187,7 @@ void composeFrame(PGraphics f) {
     if (plantsCacheDirty || plantsCache == null) renderPlantsCache();
     f.image(plantsCache, 0, 0);
   } else {
-    f.pushMatrix();
-    f.scale(layerScale);
-    for (Plant p : depthSortedAllPlants()) p.display(f);
-    f.popMatrix();
+    drawPlantsWithDepthOfField(f);
   }
   f.pushMatrix();
   f.scale(layerScale);
