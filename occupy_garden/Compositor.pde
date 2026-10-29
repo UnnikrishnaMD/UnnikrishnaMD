@@ -171,7 +171,27 @@ void composeFrame(PGraphics f) {
 // number per frame, so it costs almost nothing to animate and the grain stays still (moving grain would
 // be both noisy and expensive to encode).
 
-String typeFontName = "SansSerif.bold"; // any installed font name, or a .ttf/.otf placed in data/
+// A modern sans-serif that ships with the operating system - the first of these found is used, so the
+// same sketch works on a Mac, Windows or Linux machine. Reorder or add names (e.g. a .ttf in data/) to
+// change it; the console prints which one was picked.
+String[] typeFontNames = {
+  "Helvetica Neue Bold", "HelveticaNeue-Bold",   // macOS
+  "Avenir Next Bold", "AvenirNext-Bold",         // macOS
+  "Segoe UI Bold", "SegoeUI-Bold",               // Windows
+  "Inter Bold", "Roboto Bold", "DejaVu Sans Bold" // common on Linux
+};
+
+String pickTypeFont() {
+  java.util.HashSet<String> installed = new java.util.HashSet<String>(java.util.Arrays.asList(PFont.list()));
+  for (String name : typeFontNames) {
+    if (installed.contains(name)) {
+      println("Type field font: " + name);
+      return name;
+    }
+  }
+  println("Type field font: none of typeFontNames installed - using the generic bold sans-serif");
+  return "SansSerif.bold";
+}
 final float CAP_HEIGHT = 0.72;          // cap height as a fraction of font size (Helvetica/Arial bold) - for vertical centring
 float typeCellFill = 1.0;               // fraction of letter cells filled (1 = the whole canvas)
 float typeVineCell = 44;                // min spacing between vines rooted on letter outlines (logical px)

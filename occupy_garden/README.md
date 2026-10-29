@@ -63,10 +63,10 @@ All in `occupy_garden.pde`:
 
 - **`PIECES`**: each piece's edition, drawing, optional mask, seed and face zone.
 - **`SURFACES`**: figure placement, safe margin, rows of the letter field (8 on each surface; columns
-  follow so cells are square — 38 × 8 letters on the wall, 8 × 8 on a pool), timing.
+  follow so cells are square — 38 × 8 letters on the wall, 11 × 11 on a pool), timing.
   NODE's pixel map gives no safe area, so the 240 px (wall) / 80 px (pool) margin is our own choice.
 
-In `Compositor.pde`: `typeFontName` (any installed font, or a .ttf in `data/`), `typeCellFill`
+In `Compositor.pde`: `typeFontNames` (system sans-serifs tried in order — Helvetica Neue first), `typeCellFill`
 (1 = every cell has a letter), `erosionEnd`, `growthSpread`, and the ink colour per edition in `typeInkFor()`. The CTA vocabulary itself is the
 `cta*` lists in `Garden.pde`.
 

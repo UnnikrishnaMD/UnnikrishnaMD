@@ -54,13 +54,14 @@ class Surface {
 // The wall's logical canvas is 3840 x 960 (x2.25 = 8640 x 2160): the figure keeps roughly the on-canvas
 // size it was tuned at in the original 1920 x 1080 sketch, relative to the plants, and the extra width
 // becomes open meadow on either side. Type field: 240px margin, 8 rows of letter cells with 24px
-// gutters - 41 x 8 letters of ~176 x 189px on the wall, 8 x 8 letters of ~159px on each pool.
+// gutters - 38 x 8 letters on the wall (~190px cells); 11 x 11 letters with 18px gutters on each
+// pool (~115px cells).
 // Wall timing: 6 pieces x (18s grow + 6s hold) = 2:24, which keeps the master well inside 500 MB at 8640px.
 // The pools play three pieces each, slower, since their files are small.
 Surface[] SURFACES = {
   new Surface("wall",  8640, 2160, 3840, 960,  240, 24, 0, 8, new int[]{0, 1, 2, 3, 4, 5}, 0.92, 0,     0.02, false, 18, 6),
-  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  24, 0, 8, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
-  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  24, 0, 8, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
+  new Surface("pool1", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{0, 2, 4},          0.95, 0,     0,    true,  30, 10),
+  new Surface("pool2", 1600, 1600, 1600, 1600, 80,  18, 0, 11, new int[]{1, 3, 5},          0.95, 0,     0,    true,  30, 10)
 };
 
 // ---------- The six pieces ----------
@@ -128,7 +129,7 @@ void settings() {
 void setup() {
   frameRate(fps);
   uiFont = createFont("SansSerif.bold", 96, true);
-  typeFont = createFont(typeFontName, 200, true);
+  typeFont = createFont(pickTypeFont(), 200, true);
   buildPalettes();
   buildCuratedAdPalette();
   buildCuratedPlasticPalette();
