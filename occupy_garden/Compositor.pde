@@ -133,13 +133,14 @@ void renderPlantsCache() {
 }
 
 // ---------- Depth of field ----------
-// The meadow is drawn in three distance bands. The far band is rendered at a quarter of the resolution
-// and the middle band at half, then each is scaled back up - an out-of-focus softness that grows with
-// distance, the way a lens focused on the figure renders the meadow behind it. The near band and every
-// vine on the figure itself stay at full resolution, sharp. (Drawing the far plants smaller is also
-// cheaper, so this costs no render time.)
-float farBand = 0.3, midBand = 0.5;          // depth (0 = horizon .. 1 = bottom edge) where each band ends
-float farResolution = 0.25, midResolution = 0.5;
+// The meadow is drawn in three distance bands and the two far ones are optically blurred: the far band
+// is drawn at half resolution and blurred strongly, the middle band at full resolution and blurred
+// lightly, then both are laid under the sharp near band. The blur is a three-pass box blur (a close
+// approximation of a Gaussian, the way a lens defocuses) on premultiplied colour, so edges soften evenly
+// with no blocky stair-steps and no dark halos where plants meet the sky. The vines on the figure itself
+// always stay sharp.
+float farBand = 0.3, midBand = 0.5;   // depth (0 = horizon .. 1 = bottom edge) where each band ends
+float farBlur = 6, midBlur = 2;       // blur radius in output pixels
 PGraphics farLayer, midLayer;
 
 float plantDepthU(Plant p) {
@@ -147,34 +148,94 @@ float plantDepthU(Plant p) {
 }
 
 void drawPlantsWithDepthOfField(PGraphics f) {
-  int fw = max(1, round(f.width * farResolution)), fh = max(1, round(f.height * farResolution));
-  int mw = max(1, round(f.width * midResolution)), mh = max(1, round(f.height * midResolution));
+  int fw = max(1, f.width / 2), fh = max(1, f.height / 2);
   if (farLayer == null || farLayer.width != fw || farLayer.height != fh) farLayer = createGraphics(fw, fh);
-  if (midLayer == null || midLayer.width != mw || midLayer.height != mh) midLayer = createGraphics(mw, mh);
+  if (midLayer == null || midLayer.width != f.width || midLayer.height != f.height) midLayer = createGraphics(f.width, f.height);
   ArrayList<Plant> all = depthSortedAllPlants();
   java.util.HashSet<Plant> sharp = new java.util.HashSet<Plant>(bodyContourPlants); // the figure's own vines are in focus
+  float px = f.width / (float) S.outW; // blur radii are given at output size; scale them for previews
 
   farLayer.beginDraw();
   farLayer.clear();
-  farLayer.scale(layerScale * farResolution);
+  farLayer.scale(layerScale * 0.5);
   for (Plant p : all) if (!sharp.contains(p) && plantDepthU(p) < farBand) p.display(farLayer);
   farLayer.endDraw();
+  gaussianBlur(farLayer, max(1, round(farBlur * px * 0.5)));
 
   midLayer.beginDraw();
   midLayer.clear();
-  midLayer.scale(layerScale * midResolution);
+  midLayer.scale(layerScale);
   for (Plant p : all) {
     float u = plantDepthU(p);
     if (!sharp.contains(p) && u >= farBand && u < midBand) p.display(midLayer);
   }
   midLayer.endDraw();
+  gaussianBlur(midLayer, max(1, round(midBlur * px)));
 
   f.image(farLayer, 0, 0, f.width, f.height);
-  f.image(midLayer, 0, 0, f.width, f.height);
+  f.image(midLayer, 0, 0);
   f.pushMatrix();
   f.scale(layerScale);
   for (Plant p : all) if (sharp.contains(p) || plantDepthU(p) >= midBand) p.display(f);
   f.popMatrix();
+}
+
+// Three box-blur passes of radius r in each direction ~ a Gaussian. Works on premultiplied ARGB so
+// transparent pixels contribute no colour (no dark fringes), then converts back.
+void gaussianBlur(PGraphics g, int r) {
+  g.loadPixels();
+  int w = g.width, h = g.height, n = w * h;
+  int[] px = g.pixels;
+  int[] a = new int[n], rr = new int[n], gg = new int[n], bb = new int[n];
+  for (int i = 0; i < n; i++) {
+    int c = px[i], al = c >>> 24;
+    a[i] = al;
+    rr[i] = ((c >> 16) & 255) * al / 255;
+    gg[i] = ((c >> 8) & 255) * al / 255;
+    bb[i] = (c & 255) * al / 255;
+  }
+  int[] tmp = new int[n];
+  int[][] ch = { a, rr, gg, bb };
+  for (int[] c : ch) {
+    for (int pass = 0; pass < 3; pass++) {
+      boxBlurH(c, tmp, w, h, r);
+      boxBlurV(tmp, c, w, h, r);
+    }
+  }
+  for (int i = 0; i < n; i++) {
+    int al = constrain(a[i], 0, 255);
+    if (al == 0) { px[i] = 0; continue; }
+    int r2 = constrain(rr[i] * 255 / al, 0, 255), g2 = constrain(gg[i] * 255 / al, 0, 255), b2 = constrain(bb[i] * 255 / al, 0, 255);
+    px[i] = (al << 24) | (r2 << 16) | (g2 << 8) | b2;
+  }
+  g.updatePixels();
+}
+
+void boxBlurH(int[] src, int[] dst, int w, int h, int r) {
+  float inv = 1f / (r + r + 1);
+  for (int y = 0; y < h; y++) {
+    int row = y * w;
+    int first = src[row], last = src[row + w - 1];
+    int sum = (r + 1) * first;
+    for (int x = 0; x < r; x++) sum += src[row + min(x, w - 1)];
+    for (int x = 0; x < w; x++) {
+      sum += src[row + min(x + r, w - 1)] - (x - r - 1 >= 0 ? src[row + x - r - 1] : first);
+      dst[row + x] = round(sum * inv);
+    }
+  }
+}
+
+void boxBlurV(int[] src, int[] dst, int w, int h, int r) {
+  float inv = 1f / (r + r + 1);
+  for (int x = 0; x < w; x++) {
+    int first = src[x];
+    int sum = (r + 1) * first;
+    for (int y = 0; y < r; y++) sum += src[min(y, h - 1) * w + x];
+    for (int y = 0; y < h; y++) {
+      sum += src[min(y + r, h - 1) * w + x] - (y - r - 1 >= 0 ? src[(y - r - 1) * w + x] : first);
+      dst[y * w + x] = round(sum * inv);
+    }
+  }
 }
 
 void composeFrame(PGraphics f) {

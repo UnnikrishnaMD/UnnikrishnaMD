@@ -963,7 +963,7 @@ void flowMeadow() {
     for (Plant p : list) {
       PVector r = p.path.get(0);
       if (r.x < srcPlace[0] || r.x > srcPlace[0] + srcPlace[2]) continue;
-      if (hashUnit(p.varietySeed, 911) > 0.42) continue;
+      if (hashUnit(p.varietySeed, 911) > 0.6) continue;
       p.stepLen *= 1.7;
       int needed = int((r.y - topY) / (p.stepLen * 0.62) * lerp(0.55, 1.0, hashUnit(p.varietySeed, 919)));
       p.maxSteps = max(p.maxSteps, min(needed, 650));
@@ -990,7 +990,33 @@ void buildCentralGrowth() {
       added++;
     }
   }
-  println("Central growth: " + added);
+  // Under the curl zone: a second, denser pass across the middle of the drawing's width, where the
+  // decoration sits above the body - these feed more stems up through the curls.
+  float cx0 = srcPlace[0] + srcPlace[2] * 0.15, cx1 = srcPlace[0] + srcPlace[2] * 0.85;
+  for (float gy = horizonY + 10; gy < H + 20; gy += 18) {
+    for (float gx = cx0; gx < cx1; gx += 16) {
+      float px = gx + random(-8, 8), py = gy + random(-8, 8);
+      int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
+      if (isBody(sx, sy) || random(1) > 0.45) continue;
+      fillerPlants.add(makeFillerPlant(px, py, constrain(py / (float) H, 0, 1), regionAbove(sx, sy)));
+      added++;
+    }
+  }
+  // The foreground edge: a dense band rooted at and just below the bottom of the canvas, so stems enter
+  // the picture from its bottom edge and the front of the meadow has no gaps between plants.
+  int edge = 0;
+  for (float gx = -20; gx < W + 20; gx += 9) {
+    for (int k = 0; k < 2; k++) {
+      float px = gx + random(-5, 5), py = H - 30 + random(0, 60);
+      int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
+      if (isBody(sx, sy)) continue;
+      Plant p = makeFillerPlant(px, py, 1, regionAbove(sx, sy));
+      p.maxSteps = int(p.maxSteps * random(0.8, 1.4));
+      fillerPlants.add(p);
+      edge++;
+    }
+  }
+  println("Central growth: " + added + "  Foreground edge: " + edge);
 }
 
 // NODE: foreshortening and aerial perspective. A plant's size on screen follows how far down the canvas
