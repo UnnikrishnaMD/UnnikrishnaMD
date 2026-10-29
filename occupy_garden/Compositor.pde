@@ -321,8 +321,14 @@ void buildTypeGrid() {
   ArrayList<PVector> chosen = organicSubsample(edges, typeVineCell, typeVineKeepProb);
   for (PVector v : chosen) {
     if (onBody(v.x, v.y)) continue;
+    if (v.y < H * skyBand) continue; // nothing roots in the sky - only letters below the horizon carry vines
     Plant p = new Plant(v.x, v.y, typeInk, true);
     p.maxSteps = int(random(25, 75));
+    float d = depthScaleAt(v.y); // same foreshortening and haze as the rest of the meadow
+    p.depth = d;
+    p.stepLen *= d;
+    p.sizeScale *= d;
+    p.haze = 0.5 * pow(1 - constrain((v.y / H - skyBand) / (1 - skyBand), 0, 1), 1.6);
     typePlants.add(p);
   }
   println("Type cells: " + typeCells.size() + "  Type vines: " + typePlants.size());

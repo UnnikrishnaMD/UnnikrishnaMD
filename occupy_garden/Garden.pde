@@ -879,6 +879,21 @@ Plant makeFillerPlant(float px, float py, float t, int above) {
 //  4. The meadow at the bottom of the canvas grows taller, so the growth rises from the ground and
 //     washes up around the figure rather than sitting as a band of short grass.
 void flowMeadow() {
+  // From the ground: nothing roots in the sky. Every plant rooted above the horizon goes, and so do the
+  // silhouette vines that sat on TOP of the figure (their way into the body points down) - the body is
+  // reached by vines climbing up from its lower and side edges, the way growth covers something lying in
+  // a meadow.
+  float horizonY = H * skyBand;
+  ArrayList[] lists = { plants, contourPlants, fillerPlants, bodyContourPlants };
+  for (ArrayList list : lists) {
+    for (int i = list.size() - 1; i >= 0; i--) {
+      Plant p = (Plant) list.get(i);
+      PVector r = p.path.get(0);
+      boolean onTopOfBody = list == bodyContourPlants && sin(p.inwardAngle) > 0.45;
+      if (r.y < horizonY || onTopOfBody) list.remove(i);
+    }
+  }
+
   float rx0 = srcPlace[0], ry0 = srcPlace[1], rx1 = srcPlace[0] + srcPlace[2], ry1 = srcPlace[1] + srcPlace[3];
   float fade = 0.24 * min(srcPlace[2], srcPlace[3]);
   for (int li = 0; li < 2; li++) {
@@ -903,10 +918,11 @@ void flowMeadow() {
     int sx = int((r.x - srcPlace[0]) / srcPlace[4]), sy = int((r.y - srcPlace[1]) / srcPlace[4]);
     boolean inFace = sx >= faceZoneX0 && sx <= faceZoneX1 && sy >= faceZoneY0 && sy <= faceZoneY1;
     float patch = noise(r.x * 0.008 + 8300, r.y * 0.008 + 8300);
-    if (!inFace && patch > 0.52 && hashUnit(p.varietySeed, 701) < 0.7) {
+    if (!inFace && patch > 0.44 && hashUnit(p.varietySeed, 701) < 0.85) {
       p.canCrossBody = true;
       p.heading = p.inwardAngle + (hashUnit(p.varietySeed, 709) - 0.5) * 0.6;
-      p.maxSteps = int(p.maxSteps * 1.2);
+      // they climb up from the body's lower and side edges, so they need the length to get over it
+      p.maxSteps = int(p.maxSteps * 1.9);
     }
   }
 
@@ -931,6 +947,32 @@ void flowMeadow() {
     float rise = constrain((t - riseStart) / (1 - riseStart), 0, 1);
     if (p.isFiller) p.maxSteps = int(p.maxSteps * (1 + 0.9 * rise * rise));
     else p.maxSteps = int(p.maxSteps * 1.25);
+  }
+  applyDepth(plants, true);
+  applyDepth(fillerPlants, true);
+  applyDepth(contourPlants, false);
+  applyDepth(bodyContourPlants, false);
+}
+
+// NODE: foreshortening and aerial perspective. A plant's size on screen follows how far down the canvas
+// it roots: about a third of full size just below the horizon, growing smoothly to ~1.5x at the bottom
+// edge - its stem length per step (so its height), and for lists that weren't depth-scaled already its
+// leaves, blooms and stroke too. Distant plants also fade towards the haze colour, so the meadow recedes
+// into the distance instead of reading as one flat layer.
+float depthScaleAt(float rootY) {
+  float u = constrain((rootY / H - skyBand) / (1 - skyBand), 0, 1); // 0 at the horizon .. 1 at the bottom
+  return lerp(0.32, 1.45, pow(u, 1.15));
+}
+
+void applyDepth(ArrayList<Plant> list, boolean sizeAlreadyDepthScaled) {
+  for (Plant p : list) {
+    float y = p.path.get(0).y;
+    float d = depthScaleAt(y);
+    float u = constrain((y / H - skyBand) / (1 - skyBand), 0, 1);
+    p.depth = d;
+    p.stepLen *= d;
+    if (!sizeAlreadyDepthScaled) p.sizeScale *= d;
+    p.haze = 0.5 * pow(1 - u, 1.6);
   }
 }
 
@@ -1078,6 +1120,8 @@ class Plant {
   float wildness = 1;     // NODE: multiplies the species' curl - how much this stem wanders as it grows
   int foliageAccent = -1; // NODE: floralPalette index this plant's leaves lean towards (-1 = plain green foliage)
   float inwardAngle = 0;  // NODE: for silhouette vines, the direction pointing into the body
+  float depth = 1;        // NODE: perspective scale from where it roots - small near the horizon, large up front
+  float haze = 0;         // NODE: aerial-perspective haze, 0 up front .. ~0.5 near the horizon
 
   Plant(float x, float y, color imgCol, boolean creeping) {
     this(x, y, imgCol, creeping, pickSpecies(creeping));
@@ -1145,6 +1189,9 @@ class Plant {
             br.canCrossBody = canCrossBody; // inherit - a branch off a body-permitted vine may also touch it
             br.toneOverride = toneOverride; // NODE: a branch keeps its parent's foliage tone
             br.wildness = wildness;
+            br.stepLen *= depth; // a branch is as far away as its plant
+            br.depth = depth;
+            br.haze = haze;
             br.foliageAccent = foliageAccent;
             if (isFiller) br.usesAccentColor = usesAccentColor; // NODE: and a meadow branch's bloom keeps its parent's colour source
             br.heading = leafAngle;
@@ -1175,7 +1222,11 @@ void displayStem(PGraphics pg, Plant p) {
   int n = p.path.size();
   if (n < 2) return;
   color sc = stemColor(p);
-  float[] weights = { 3.2, 2.4, 1.8, 1.2, 0.6 };
+  // NODE: 8 tapering steps (was 5: 3.2 / 2.4 / 1.8 / 1.2 / 0.6) with round joins, so the taper reads
+  // as one smooth organic stem rather than visible stepped bands on a curve.
+  float[] weights = { 3.2, 2.75, 2.35, 1.95, 1.6, 1.25, 0.9, 0.55 };
+  pg.strokeJoin(ROUND);
+  pg.strokeCap(ROUND);
   int bands = weights.length;
   int bandSize = max(1, n / bands);
   int idx = 0;
@@ -1800,7 +1851,7 @@ color stemColor(Plant p) {
   // NODE: a colourful plant's stem takes its colour too (a little less strongly than its leaves, so stem
   // and leaf still read apart) - the whole plant is coloured, not just green stems with coloured leaves.
   if (p.foliageAccent >= 0) sc = lerpColor(sc, editionTint(floralPalette[p.foliageAccent]), 0.65);
-  return sc;
+  return p.haze > 0 ? lerpColor(sc, hazeColor, p.haze) : sc;
 }
 color leafColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[foliageTone(p)], p.paletteSlot + 777);
@@ -1809,7 +1860,7 @@ color leafColor(Plant p) {
   // NODE: half the plants carry coloured foliage - their leaves lean towards a vivid bloom
   // colour (pink, violet, coral, turquoise, gold...) instead of staying green; stems stay green.
   if (p.foliageAccent >= 0) lc = lerpColor(lc, editionTint(floralPalette[p.foliageAccent]), 0.78);
-  return lc;
+  return p.haze > 0 ? lerpColor(lc, hazeColor, p.haze) : lc;
 }
 
 // ---------------- Edition flora identity ----------------
@@ -1914,8 +1965,11 @@ color[] editionBgColors() { // { primary, secondary } — deep enough that the p
 // A real sky -> hazy horizon -> earth vertical structure, underneath each edition's own duo wash
 // (kept as a tint on top so editions keep their distinct mood). Plant size/haze already scales by
 // depth; this gives the whole canvas a genuine "standing in a landscape" spatial structure to play against.
-color skyTop = color(94, 168, 214);
-color skyHorizon = color(226, 216, 190);
+// NODE: a clearer, softer sky blue (was 94, 168, 214) and a paler horizon (was 226, 216, 190).
+color skyTop = color(108, 182, 234);
+color skyHorizon = color(232, 236, 230);
+// NODE: what distance fades towards - a pale version of the horizon sky (aerial perspective).
+color hazeColor = color(214, 230, 238);
 // NODE: was a brown earth (90, 66, 44) - showing between the foreground stems it made the whole front
 // of the meadow read ochre. A deep cerulean-green shade instead, the shadow of the growth itself.
 color earthColor = color(28, 84, 80);
@@ -1927,15 +1981,20 @@ void drawEditionBackground(PGraphics pg) {
   float ns = 0.004; // low-frequency drift between the two colors
   for (int y = 0; y < H; y += cell) {
     float t = y / (float) H; // 0 = top (sky), 1 = bottom (earth)
-    color vertical = (t < 0.6)
-      ? lerpColor(skyTop, skyHorizon, constrain(t / 0.6, 0, 1))
-      : lerpColor(skyHorizon, earthColor, constrain((t - 0.6) / 0.4, 0, 1));
+    // NODE: the gradient's horizon sits where the meadow starts (skyBand + 0.12; it was fixed at 0.6),
+    // so the sky ends where the ground begins.
+    float hz = skyBand + 0.12;
+    color vertical = (t < hz)
+      ? lerpColor(skyTop, skyHorizon, constrain(t / hz, 0, 1))
+      : lerpColor(skyHorizon, earthColor, constrain((t - hz) / (1 - hz), 0, 1));
     float lighten = map(y, 0, H, 0.1, 0.0);
     for (int x = 0; x < W; x += cell) {
       float n = noise(500 + x * ns, 500 + y * ns); // offset so the wash doesn't mirror the meadow clumps
       n = constrain(map(n, 0.35, 0.65, 0, 1), 0, 1); // Perlin clusters near 0.5 — widen that band so the two colors swing fully
       color editionWash = lerpColor(duo[0], duo[1], n);
-      color c = lerpColor(vertical, editionWash, 0.28); // sky/earth is the structure; the edition wash is a lighter tint on top of it
+      // sky/earth is the structure; the edition wash is a lighter tint on top of it - NODE: only lightly in
+      // the sky (0.1, was 0.28 everywhere) so the blue stays clean, full strength on the ground
+      color c = lerpColor(vertical, editionWash, t < hz ? lerp(0.1, 0.28, t / hz) : 0.28);
       pg.fill(lerpColor(c, color(255), lighten));
       pg.rect(x, y, cell, cell);
     }
@@ -2061,7 +2120,8 @@ color flowerColor(Plant p) {
   float s = max(hsb[1], 0.68); // NODE: floors raised (0.5 / 0.6) - more saturated, brighter blooms
   float b = max(hsb[2], 0.74);
   int rgb = Color.HSBtoRGB(hsb[0], s, b);
-  return editionTint(color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
+  color fc = editionTint(color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
+  return p.haze > 0 ? lerpColor(fc, hazeColor, p.haze * 0.8) : fc; // NODE: distant blooms hazed a little less than foliage, so colour still carries
 }
 
 String colorModeName() {
@@ -2101,13 +2161,14 @@ void buildConsumerLayer() {
     if (adPanels.size() >= 30) break;
     if (random(1) < 0.025) {
       float px = constrain(p.path.get(0).x, panelMargin, W - panelMargin);
-      float py = constrain(p.path.get(0).y, panelMargin, H - panelMargin);
+      float py = constrain(p.path.get(0).y, max(panelMargin, H * skyBand + 40), H - panelMargin); // NODE: boards stand on the ground, not in the sky
       if (!tooCloseToBody(px, py, 65) && !tooCloseToPanels(px, py, 100)) adPanels.add(new PVector(px, py, random(1000)));
     }
   }
   for (int i = 0; i < 28; i++) { // guaranteed baseline scatter, strictly off the figure, so the canopy always reads regardless of vine density
-    float px = random(panelMargin, W - panelMargin), py = random(panelMargin, H - panelMargin);
-    for (int tries = 0; tries < 20 && (tooCloseToBody(px, py, 65) || tooCloseToPanels(px, py, 100)); tries++) { px = random(panelMargin, W - panelMargin); py = random(panelMargin, H - panelMargin); }
+    float groundTop = max(panelMargin, H * skyBand + 40); // NODE: boards stand on the ground, not in the sky
+    float px = random(panelMargin, W - panelMargin), py = random(groundTop, H - panelMargin);
+    for (int tries = 0; tries < 20 && (tooCloseToBody(px, py, 65) || tooCloseToPanels(px, py, 100)); tries++) { px = random(panelMargin, W - panelMargin); py = random(groundTop, H - panelMargin); }
     if (!tooCloseToBody(px, py, 65)) adPanels.add(new PVector(px, py, random(1000))); // skip rather than ever falling back onto the body
   }
   // Capped hard at 12 total, matching mintFaces.length - Currency Bloom only has 12 distinct metal
