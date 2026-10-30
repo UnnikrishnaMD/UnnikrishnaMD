@@ -1031,6 +1031,38 @@ void buildCentralGrowth() {
 //    above the body (stopping at the body itself) to ragged heights near the top edge, so the curls'
 //    block outline disappears into the growth.
 // Forefront meadow flowers more, and bigger, here too.
+//
+// The foreground overlay vines come in five kinds, so the sharp growth over the blur varies in both
+// behaviour and colour rather than repeating one plant:
+//   twiner  - a climbing vine that curls tightly and wanders, weak pull upright
+//   spire   - a straight, tall flowering stem, strong pull upright, crowded with blooms
+//   arch    - starts well off vertical and bows out sideways in a long spray
+//   bush    - a shorter branching clump, many side shoots
+//   wisp    - a fine, thin grass-like stem, few leaves, airy
+// Colour varies independently: a third keep natural greens, the rest take a bloom colour - stems and
+// leaves together - from the full flower palette or the drawing's own swirl colours.
+Plant overlayVine(float px, float py, float topY, float d, float kindRoll) {
+  int kind = int(kindRoll * 5) % 5;
+  int[] kindSpecies = { 4, 1, 3, 6, 2 }; // morning glory, trumpet bell, heart-leaf creeper, round shrub, star bloom
+  Plant p = new Plant(px, py, color(90, 160, 120), kind == 0 || kind == 2, kindSpecies[kind]);
+  p.depth = d;
+  p.stepLen *= d * 1.6;
+  float reach = 0.75;
+  switch (kind) {
+    case 0: p.wildness = random(2.6, 3.6); p.upPull = 0.025; p.sizeScale = random(0.7, 1.0); reach = 0.55; break;
+    case 1: p.wildness = random(0.6, 1.0); p.upPull = 0.12; p.sizeScale = random(0.85, 1.2); p.hasFlower = true; p.flowerSize *= 1.5; reach = 0.92; break;
+    case 2: p.wildness = random(1.0, 1.6); p.upPull = 0.008; p.heading = -HALF_PI + (random(1) < 0.5 ? -1 : 1) * random(0.6, 1.0); p.sizeScale = random(0.8, 1.1); reach = 0.5; break;
+    case 3: p.wildness = random(1.4, 2.0); p.upPull = 0.05; p.sizeScale = random(0.9, 1.3); reach = 0.4; topY = lerp(topY, py, 0.45); break;
+    default: p.wildness = random(1.2, 2.2); p.upPull = 0.07; p.sizeScale = random(0.4, 0.6); p.leafInterval = int(random(14, 22)); reach = 0.85; break;
+  }
+  p.maxSteps = max(20, int((py - topY) / (p.stepLen * reach)));
+  if (kind != 1) p.hasFlower = random(1) < 0.65;
+  float c = random(1);
+  if (c > 0.33) p.foliageAccent = int(random(floralPalette.length));
+  p.usesAccentColor = random(1) < 0.4;
+  return p;
+}
+
 void buildOverlayVines() {
   overlayVines.clear();
   float horizonY = H * skyBand;
@@ -1040,16 +1072,9 @@ void buildOverlayVines() {
     if (noise(px * 0.004 + 9100, 31) < 0.5) continue; // patches
     int sx = int((px - srcPlace[0]) / srcPlace[4]), sy = int((py - srcPlace[1]) / srcPlace[4]);
     if (isBody(sx, sy)) continue;
-    Plant p = new Plant(px, py, color(90, 160, 120), hashUnit(int(px * 13), 3) < 0.5);
     float d = 1.15;
-    p.depth = d;
-    p.stepLen *= d * 1.6;
-    p.sizeScale = random(0.75, 1.15);
-    p.wildness = random(1.6, 2.4);
     float topY = lerp(horizonY - H * 0.05, H * 0.55, random(1));
-    p.maxSteps = int((py - topY) / (p.stepLen * 0.75));
-    p.hasFlower = random(1) < 0.7;
-    if (random(1) < 0.5) p.foliageAccent = int(random(floralPalette.length));
+    Plant p = overlayVine(px, py, topY, d, random(1));
     overlayVines.add(p);
   }
   // up through the curls
@@ -1254,6 +1279,7 @@ class Plant {
   float depth = 1;        // NODE: perspective scale from where it roots - small near the horizon, large up front
   float haze = 0;         // NODE: aerial-perspective haze, 0 up front .. ~0.6 near the horizon
   float curlSign = 1;     // NODE: which way this stem's curl turns (+1/-1) - see grow()
+  float upPull = -1;      // NODE: how strongly the stem turns back to vertical each step; -1 = default
 
   Plant(float x, float y, color imgCol, boolean creeping) {
     this(x, y, imgCol, creeping, pickSpecies(creeping));
@@ -1301,7 +1327,7 @@ class Plant {
       // pull strong enough to win over it: a stem swings up to roughly 45 degrees off vertical and back,
       // rather than turning until it lies flat along the edge of its cone.
       heading += n * 0.12 * sp.curlMul * wildness * curlSign; // gentle curling, vine-like - species-scaled
-      heading += (-HALF_PI - heading) * (canCrossBody ? 0.03 : 0.06);
+      heading += (-HALF_PI - heading) * (upPull >= 0 ? upPull : (canCrossBody ? 0.03 : 0.06));
       heading = constrain(heading, -PI * 0.95, -PI * 0.05); // keep it swaying within an upward cone
       noiseOff += 0.015;
 
@@ -1335,6 +1361,7 @@ class Plant {
             br.canCrossBody = canCrossBody; // inherit - a branch off a body-permitted vine may also touch it
             br.toneOverride = toneOverride; // NODE: a branch keeps its parent's foliage tone
             br.wildness = wildness;
+            br.upPull = upPull;
             br.stepLen *= depth; // a branch is as far away as its plant
             br.depth = depth;
             br.haze = haze;

@@ -245,8 +245,8 @@ void composeFrame(PGraphics f) {
   f.beginDraw();
   f.image(baseLayer, 0, 0);
   updateTypeImage();
-  f.image(typeImg, 0, 0);
   f.image(figureLayer, 0, 0);
+  f.image(typeImg, 0, 0); // letters sit over the figure too (under the plants), so they read across the blue body
   if (allGrown) {
     if (plantsCacheDirty || plantsCache == null) renderPlantsCache();
     f.image(plantsCache, 0, 0);
@@ -342,13 +342,27 @@ int typeCols = 1;
 float[] typeCellAlpha = new float[0]; // per grid cell (row * typeCols + col), for the threshold map
 float[] typeCellHold = new float[0];  // per cell: how much longer this letter holds out (stagger - not all letters go at once)
 float[] typeCellCut = new float[0];   // per cell: angle of the edge the letter breaks away from
+int[] typeCellColor = new int[0];     // per cell: the letter's own colour
 PImage typeImg;
 int[] typeIdx = new int[0];   // pixel index of every inked letter pixel
 byte[] typeThr = new byte[0]; // its erosion threshold: visible while threshold > erosion
 byte[] typeA = new byte[0];   // its alpha (the letter's own opacity times the ink's)
+int[] typeRGB = new int[0];   // its colour (the letter's own)
 int lastErosionKey = -1;
 
-// Ink per edition - sits under the figure, so it's a strong colour rather than a pale one.
+// Each letter's own colour: half the time a shade of the edition's ink (its hue nudged, its value
+// varied), otherwise a vivid colour from the flower palette - so the field reads as many-coloured
+// advertising type held together by the edition's dominant ink.
+int typeLetterColor(java.util.Random rng) {
+  int base = rng.nextFloat() < 0.5 ? typeInk : floralPalette[rng.nextInt(floralPalette.length)];
+  float[] hsb = Color.RGBtoHSB((base >> 16) & 255, (base >> 8) & 255, base & 255, null);
+  float h = hsb[0] + (rng.nextFloat() - 0.5f) * 0.08f;
+  float sat = constrain(max(hsb[1], 0.55f) + (rng.nextFloat() - 0.5f) * 0.2f, 0.45f, 1);
+  float bri = constrain(hsb[2] + (rng.nextFloat() - 0.5f) * 0.3f, 0.45f, 1);
+  return Color.HSBtoRGB(h - floor(h), sat, bri);
+}
+
+// Ink per edition - a strong colour rather than a pale one.
 color typeInkFor(int ed) {
   switch (ed) {
     case 1: return color(48, 40, 34, 225);   // receipt ink
@@ -377,18 +391,20 @@ void buildTypeGrid() {
   typeCellAlpha = new float[S.rows * cols];
   typeCellHold = new float[S.rows * cols];
   typeCellCut = new float[S.rows * cols];
+  typeCellColor = new int[S.rows * cols];
 
   // Its own generator, seeded by piece seed AND edition, so each piece gets a different stream of CTAs
   // even though all six share one seed - and the garden's random() stream is left untouched.
   java.util.Random rng = new java.util.Random(sketchSeed * 7919L + editionIndex * 104729L);
   ArrayList<String> vocab = ctaVocabulary();
+  // Each CTA is used once: the vocabulary is shuffled and walked through in order (only if a surface
+  // ever needed more letters than the whole vocabulary holds would it start over, reshuffled).
+  java.util.Collections.shuffle(vocab, rng);
   StringBuilder stream = new StringBuilder();
-  String last = "";
+  int vi = 0;
   while (stream.length() < S.rows * cols) {
-    String pick = vocab.get(rng.nextInt(vocab.size()));
-    if (pick.equals(last)) continue; // never the same CTA twice in a row
-    stream.append(pick);
-    last = pick;
+    if (vi == vocab.size()) { java.util.Collections.shuffle(vocab, rng); vi = 0; }
+    stream.append(vocab.get(vi++));
   }
 
   int k = 0;
@@ -404,6 +420,7 @@ void buildTypeGrid() {
       typeCellAlpha[r * cols + c] = alpha;
       typeCellHold[r * cols + c] = rng.nextFloat() * 0.3;
       typeCellCut[r * cols + c] = rng.nextFloat() * TWO_PI;
+      typeCellColor[r * cols + c] = typeLetterColor(rng);
       typeCells.add(new TypeCell(cx, cy, letter, rot, alpha));
     }
   }
@@ -468,6 +485,7 @@ void buildTypeMap() {
   typeIdx = new int[0];
   typeThr = new byte[0];
   typeA = new byte[0];
+  typeRGB = new int[0];
   lastErosionKey = -1;
   if (typeCells.isEmpty()) return;
 
@@ -535,6 +553,7 @@ void buildTypeMap() {
   typeIdx = new int[count];
   typeThr = new byte[count];
   typeA = new byte[count];
+  typeRGB = new int[count];
   float inkAlpha = (typeInk >>> 24) / 255.0;
   int k = 0;
   for (int y = 0; y < bh; y++) {
@@ -567,6 +586,7 @@ void buildTypeMap() {
       int cc = constrain(floor((lx - typeMargin) / (typeCellW + typeGut)), 0, typeCols - 1);
       int cr = constrain(floor((ly - typeMargin) / (typeCellH + typeGut)), 0, S.rows - 1);
       typeA[k] = (byte) constrain(round(typeCellAlpha[cr * typeCols + cc] * inkAlpha * 255), 0, 255);
+      typeRGB[k] = typeCellColor[cr * typeCols + cc] & 0xFFFFFF;
       typeIdx[k] = (x0 + x) + (y0 + y) * w;
       typeThr[k] = (byte) constrain(round(thr * 255), 0, 255);
       k++;
@@ -579,9 +599,8 @@ void updateTypeImage() {
   if (ek == lastErosionKey) return;
   lastErosionKey = ek;
   int[] px = typeImg.pixels;
-  int rgb = typeInk & 0xFFFFFF;
   for (int k = 0; k < typeIdx.length; k++) {
-    px[typeIdx[k]] = (typeThr[k] & 0xFF) > ek ? ((typeA[k] & 0xFF) << 24) | rgb : 0;
+    px[typeIdx[k]] = (typeThr[k] & 0xFF) > ek ? ((typeA[k] & 0xFF) << 24) | typeRGB[k] : 0;
   }
   typeImg.updatePixels();
 }
