@@ -716,6 +716,7 @@ class FfmpegPipe {
     String[] cmd = {
       ffmpeg, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", w + "x" + h, "-r", str(fps), "-i", "-",
       "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "12", "-pix_fmt", "yuv420p",
+      "-x264-params", "rc-lookahead=10", // a short look-ahead keeps the encoder's memory modest at 8640px
       "-profile:v", "high", "-movflags", "+faststart", outFile
     };
     ProcessBuilder pb = new ProcessBuilder(cmd);
