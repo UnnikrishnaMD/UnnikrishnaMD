@@ -224,6 +224,7 @@ void stepTimeline() {
   // Billboards and drifting coins arrive late in the growth and settle in during the hold, instead of
   // standing in an empty field from the first frame.
   consumerReveal = constrain(map(tPiece, S.growSeconds * 0.55, S.growSeconds + S.holdSeconds * 0.5, 0, 1), 0, 1);
+  consumerReveal = consumerReveal * consumerReveal * (3 - 2 * consumerReveal); // eased arrival
 }
 
 void advanceClock() {

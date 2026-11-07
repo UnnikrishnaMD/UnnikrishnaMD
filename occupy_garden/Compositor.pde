@@ -56,6 +56,7 @@ void growLists(float gp) {
     float lp = constrain((gp - growthDelay[i]) / (1 - growthDelay[i]), 0, 1);
     for (Plant p : growthList(i)) {
       float pp = constrain((lp - p.growStart) / (1 - p.growStart), 0, 1);
+      pp = pp * pp * (3 - 2 * pp); // eased: each plant starts growing gently and settles softly
       // Branches spawned near a plant's tip need up to ~0.55x more steps after the stem itself stops.
       int target = int(pp * (p.maxSteps * 1.6 + 4));
       while (p.growCalls < target) {
