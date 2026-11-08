@@ -5,18 +5,20 @@
 //  box), wrap part of the way around it, then peel off into the open and
 //  curl. Leaves, buds, flowers, spiral fern tips, butterflies, ladybirds
 //  and snails grow along them.
-//  No image or external file is loaded: the contours are the outlines
-//  traced for 06, written into the code as coordinates.
+//  The drawing loads no image: the contours are the outlines traced for 06,
+//  written into the code as coordinates. The only files read are the five
+//  process drawings in data/process/, shown at the start of the reel.
 //
 //  Blocks:  PALETTE · GROUND · TYPE · RIBBONS · PAINT · LABEL · INK · CANVAS
-//           CONTOURS · THREADS · FLORA · FAUNA · GROWTH · REEL · EXPORT
+//           CONTOURS · THREADS · FLORA · FAUNA · GROWTH · REEL · PROCESS · EXPORT
 //
 //  Keys:  s  save the screen as PNG                    → print/
 //         h  save a high-res print PNG (PRINT_SCALE ×)  → print/
 //         p  save a vector PDF for print                → print/
-//         v  record one full growth cycle straight to an MP4 (Reel / Short)
-//            → reel/  — no image frames are written; each frame is piped
-//            into the encoder as it is drawn. Press v again to cancel.
+//         v  record the reel straight to an MP4 (Reel / Short) → reel/:
+//            the process drawings, then one full growth cycle. No image
+//            frames are written; each frame is piped into the encoder as it
+//            is drawn. Press v again to cancel.
 //         r  restart the growth
 // ─────────────────────────────────────────────────────────────
 
@@ -112,20 +114,34 @@ boolean LOOP = true;
 int   FPS = 30;
 
 // ── REEL ─────────────────────────────────────────────────────
-// The screen cycle (5500 + 600 frames) runs 3 min 23 s. A Reel / Short is
-// kept under 60 s, so while recording the growth clock is compressed:
-// the whole growth plays in REEL_GROWTH_SECONDS, then the finished piece
-// holds for REEL_HOLD_SECONDS (the last flowers open during the hold).
+// The screen cycle (5500 + 600 frames) runs 3 min 23 s. The reel is kept
+// short, so while recording the growth clock is compressed: the process
+// drawings play first, then the whole growth plays in REEL_GROWTH_SECONDS,
+// then the finished piece holds for REEL_HOLD_SECONDS (the last flowers
+// open during the hold).
 // Butterflies keep beating at their normal speed.
 // Output: 1080 × 1920, 30 fps, H.264 High, yuv420p (BT.709), AAC silent
 // track, faststart — accepted by Instagram Reels and YouTube Shorts.
-float   REEL_GROWTH_SECONDS = 52;
-float   REEL_HOLD_SECONDS = 6;
+float   REEL_GROWTH_SECONDS = 20;
+float   REEL_HOLD_SECONDS = 3;
 int     REEL_CRF = 18;             // lower = better quality, bigger file
 String  REEL_MAXRATE = "8M";       // YouTube's recommended rate for 1080p30; keeps the file a sensible size
 boolean RECORD_ON_START = false;   // true: start recording as soon as the sketch opens
 boolean EXIT_AFTER_RECORD = false; // true: close the sketch when the MP4 is done
 String  FFMPEG_PATH = "";          // leave empty to find ffmpeg automatically
+
+// ── PROCESS ──────────────────────────────────────────────────
+// The hand-made stages before the code, shown in order at the start of the
+// reel: pencil sketch, inked lines with ribbons, painted ground, stencil
+// type and soap bottle, the assembled drawing. Each image fills the 9:16
+// frame (centred, edges trimmed if its proportions differ), drifts in
+// slightly, and crossfades into the next; the last one dissolves into the
+// coded drawing, where the threads begin.
+boolean PROCESS_INTRO = true;
+String[] PROCESS_FILES = { "process/01.png", "process/02.png", "process/03.png", "process/04.png", "process/05.png" };
+float   PROCESS_SECONDS = 1.2;     // time on screen per drawing, crossfade included
+float   PROCESS_FADE = 0.4;        // crossfade length
+float   PROCESS_DRIFT = 0.03;      // slow push-in over each drawing (3 %)
 
 // ── EXPORT ───────────────────────────────────────────────────
 String EXPORT_NAME = "series-07-contour-threads";
@@ -173,6 +189,7 @@ Process encoder;
 OutputStream encoderIn;
 ByteBuffer frameBytes;
 String reelPath;
+PImage[] processImgs = new PImage[0];
 
 void settings() { size(W, H); }
 
@@ -184,6 +201,7 @@ void setup() {
   base.beginDraw(); renderBase(base, groundImg); base.endDraw();
   buildThreads();
   layer = createGraphics(W, H);
+  loadProcess();
   restart();
   if (RECORD_ON_START) startRecording();
 }
@@ -195,7 +213,14 @@ void restart() {
 }
 
 void draw() {
-  if (recording) t = reelClock(recFrame);
+  if (recording && recFrame < introFrames()) {
+    drawIntro(recFrame);
+    writeFrame();
+    recFrame++;
+    if (recFrame >= reelFrames()) finishRecording();
+    return;
+  }
+  if (recording) t = reelClock(recFrame - introFrames());
 
   image(base, 0, 0);
   layer.beginDraw(); growStep(layer); layer.endDraw();
@@ -219,7 +244,46 @@ void draw() {
 // ── reel: frames go straight into the encoder, nothing is saved as images ──
 
 int reelGrowthFrames() { return round(REEL_GROWTH_SECONDS * FPS); }
-int reelFrames() { return reelGrowthFrames() + round(REEL_HOLD_SECONDS * FPS); }
+int reelFrames() { return introFrames() + reelGrowthFrames() + round(REEL_HOLD_SECONDS * FPS); }
+int introFrames() { return processImgs.length * round(PROCESS_SECONDS * FPS); }
+
+// ── process intro ──
+
+// scale each drawing once so it covers the 9:16 frame at 1 + PROCESS_DRIFT
+void loadProcess() {
+  if (!PROCESS_INTRO) { processImgs = new PImage[0]; return; }
+  ArrayList<PImage> list = new ArrayList<PImage>();
+  for (String f : PROCESS_FILES) {
+    PImage img = loadImage(f);
+    if (img == null) { println("Process drawing not found: data/" + f + " (skipped)"); continue; }
+    float sc = max(W / (float) img.width, H / (float) img.height) * (1 + PROCESS_DRIFT);
+    img.resize(round(img.width * sc), round(img.height * sc));
+    list.add(img);
+  }
+  processImgs = list.toArray(new PImage[0]);
+}
+
+void drawProcess(int i, float local, float alpha) {
+  PImage img = processImgs[i];
+  float z = (1 + PROCESS_DRIFT * local) / (1 + PROCESS_DRIFT);   // grows from 1/(1+d) to 1
+  float w = img.width * z, h = img.height * z;
+  tint(255, alpha);
+  image(img, (W - w) / 2, (H - h) / 2, w, h);
+  noTint();
+}
+
+void drawIntro(int f) {
+  int seg = round(PROCESS_SECONDS * FPS), fade = round(PROCESS_FADE * FPS);
+  int i = f / seg, k = f % seg;
+  background(255);
+  drawProcess(i, k / (float) seg, 255);
+  if (k >= seg - fade) {
+    float u = (k - (seg - fade) + 1) / (float) fade;
+    u = u * u * (3 - 2 * u);
+    if (i + 1 < processImgs.length) drawProcess(i + 1, 0, 255 * u);
+    else { tint(255, 255 * u); image(base, 0, 0); noTint(); }   // into the coded drawing
+  }
+}
 
 // growth clock for video frame f: compressed during growth, real time in the hold
 float reelClock(int f) {
@@ -270,7 +334,7 @@ void startRecording() {
   recFrame = 0;
   recording = true;
   frameRate(1000);         // render as fast as the machine allows; timing comes from the encoder
-  println("Recording " + reelFrames() + " frames (" + (reelFrames() / FPS) + " s) → " + reelPath);
+  println("Recording " + reelFrames() + " frames (" + nf(reelFrames() / (float) FPS, 0, 1) + " s) → " + reelPath);
 }
 
 void writeFrame() {

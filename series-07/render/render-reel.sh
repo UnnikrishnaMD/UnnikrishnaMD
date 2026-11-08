@@ -10,6 +10,9 @@ core="$build/core-4.5.7.jar"
 [ -f "$core" ] || curl -sSL -o "$core" https://repo1.maven.org/maven2/org/processing/core/4.5.7/core-4.5.7.jar
 python3 "$here/pde_to_java.py" "$sketch" "$build/Sketch.java" RECORD_ON_START=true EXIT_AFTER_RECORD=true
 javac -nowarn -cp "$core" -d "$build" "$build/Sketch.java"
-cd "$here/.."     # sketchPath → series-07/, so the MP4 lands in series-07/reel/
+cd "$sketch"      # sketchPath = the sketch folder, so data/process/ is found
 xvfb-run -a -s "-screen 0 1280x2048x24" \
   java -Djava.awt.headless=false -cp "$core:$build" Sketch "--sketch-path=$PWD"
+mkdir -p "$here/../reel"
+mv reel/*.mp4 "$here/../reel/" && rm -rf reel
+ls -la "$here/../reel"
