@@ -16,6 +16,13 @@ ArrayList<Plant> contourPlants = new ArrayList<Plant>();      // sparse vines fo
 ArrayList<Plant> bodyContourPlants = new ArrayList<Plant>();  // vines rooted on the human figure's own silhouette edge
 ArrayList<Plant> fillerPlants = new ArrayList<Plant>();       // meadow filler across empty canvas, sized/hazed by depth
 boolean[] bodyMask;  // true where a srcImg pixel belongs to the human figure — kept clear of plant roots
+// 0..1 per srcImg pixel, 0 off-body - high where the body is locally THIN relative to its own nearby
+// surroundings (wrists/knees/ankles/neck), self-calibrating from a chamfer distance-to-edge transform
+// compared against a local max (so it adapts to this figure's own proportions, no hand-guessed radius
+// or coordinates). See computeJointIntensity().
+float[] jointIntensity;
+float bodyBoxMinX, bodyBoxMaxX, bodyBoxMinY, bodyBoxMaxY;
+boolean bodyAlongIsX; // true if the figure's own measured bounding box is wider than it is tall
 
 // ---------- Color control state ----------
 ArrayList<int[]> palettes = new ArrayList<int[]>();
@@ -55,6 +62,16 @@ int printScale = 3; // 1920x1080 * 3 = 5760x3240px, plenty for large-format prin
 // Override at launch with a CLI arg (processing-java ... seed), e.g. for phase 8's batch sweeps;
 // defaults to a fixed value so a plain Run in the IDE is reproducible too.
 int sketchSeed = 42;
+
+// The deliverable is static Giclee prints, not a live/animated view - every sway, spin, and drift
+// throughout the sketch used to be keyed off Processing's frameCount (which only ever increases), so
+// the live view never actually held still, and no two screenshots of "the same" render ever matched
+// exactly. Replacing frameCount with this frozen constant everywhere those effects are computed holds
+// the whole scene at one fixed instant - which is also exactly what a print export needs.
+final int stillFrame = 0;
+// Bumped every round and drawn as an on-screen label (see draw()) so a screenshot can prove which
+// code actually produced it - never baked into any exported print/JPEG.
+final String BUILD_TAG = "v1-rebuild-infra";
 
 // ---------- Consumer-culture layer ----------
 // A second, separable layer drawn on top of the botanical scene above. The plant/flower growth
@@ -136,6 +153,8 @@ void draw() {
     if (bodyMaskDebugLayer == null) buildBodyMaskDebugLayer();
     image(bodyMaskDebugLayer, 0, 0);
   }
+
+  drawBuildLabel(); // live-canvas only, never baked into any export - see BUILD_TAG
 
   if (recording) videoExport.saveFrame();
 }
@@ -221,6 +240,22 @@ boolean onBody(float cx, float cy) {
   int sx = int((cx - srcPlace[0]) / srcPlace[4]);
   int sy = int((cy - srcPlace[1]) / srcPlace[4]);
   return isBody(sx, sy);
+}
+
+// bgImg and srcImg have INDEPENDENTLY adjustable placement (their own scale/offset), and the figure
+// is actually drawn to the canvas via bgImg's placement, not srcImg's - so a body-avoidance check
+// using onBody() (srcImg-based) can be wrong whenever the two placements have drifted apart, letting
+// overlay content visibly land on the figure despite "passing" the check. This checks against the
+// placement the figure is actually drawn with.
+boolean onVisibleBody(float cx, float cy) {
+  float[] bgPlace = computePlacement(bgImg, bgScale, bgOffsetX, bgOffsetY);
+  int sx = int((cx - bgPlace[0]) / bgPlace[4]);
+  int sy = int((cy - bgPlace[1]) / bgPlace[4]);
+  return isBody(sx, sy);
+}
+boolean tooCloseToBody(float cx, float cy, float margin) {
+  return onVisibleBody(cx, cy) || onVisibleBody(cx - margin, cy) || onVisibleBody(cx + margin, cy)
+      || onVisibleBody(cx, cy - margin) || onVisibleBody(cx, cy + margin);
 }
 
 void buildAll() {
@@ -350,6 +385,92 @@ void buildBodyMask() {
     }
   }
   collectSwirlAccents();
+  computeJointIntensity();
+  computeBodyExtent();
+}
+
+// Chamfer distance-to-edge transform (two-pass, 1/1.4142 weights - a cheap, good approximation of true
+// Euclidean distance), then compared against a local max of that same distance (separable box-max
+// filter) so a pixel reads as "thin" relative to the body's OWN nearby thickness rather than against
+// some fixed pixel threshold that would misjudge a larger or smaller figure.
+void computeJointIntensity() {
+  int w = srcImg.width, h = srcImg.height;
+  float INF = 1e6;
+  float[] dist = new float[w * h];
+  for (int i = 0; i < dist.length; i++) dist[i] = bodyMask[i] ? INF : 0;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int i = x + y * w;
+      if (!bodyMask[i]) continue;
+      float d = dist[i];
+      if (x > 0) d = min(d, dist[i - 1] + 1);
+      if (y > 0) d = min(d, dist[i - w] + 1);
+      if (x > 0 && y > 0) d = min(d, dist[i - w - 1] + 1.4142f);
+      if (x < w - 1 && y > 0) d = min(d, dist[i - w + 1] + 1.4142f);
+      dist[i] = d;
+    }
+  }
+  for (int y = h - 1; y >= 0; y--) {
+    for (int x = w - 1; x >= 0; x--) {
+      int i = x + y * w;
+      if (!bodyMask[i]) continue;
+      float d = dist[i];
+      if (x < w - 1) d = min(d, dist[i + 1] + 1);
+      if (y < h - 1) d = min(d, dist[i + w] + 1);
+      if (x < w - 1 && y < h - 1) d = min(d, dist[i + w + 1] + 1.4142f);
+      if (x > 0 && y < h - 1) d = min(d, dist[i + w - 1] + 1.4142f);
+      dist[i] = d;
+    }
+  }
+  int radius = 30, step = 3; // stepped scan - an approximate box-max is plenty for this purpose and far cheaper
+  float[] rowMax = new float[w * h];
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      float m = 0;
+      for (int dx = -radius; dx <= radius; dx += step) m = max(m, dist[constrain(x + dx, 0, w - 1) + y * w]);
+      rowMax[x + y * w] = m;
+    }
+  }
+  float[] localMax = new float[w * h];
+  for (int x = 0; x < w; x++) {
+    for (int y = 0; y < h; y++) {
+      float m = 0;
+      for (int dy = -radius; dy <= radius; dy += step) m = max(m, rowMax[x + constrain(y + dy, 0, h - 1) * w]);
+      localMax[x + y * w] = m;
+    }
+  }
+  jointIntensity = new float[w * h];
+  for (int i = 0; i < jointIntensity.length; i++) {
+    jointIntensity[i] = (!bodyMask[i] || localMax[i] < 1) ? 0 : constrain(1 - dist[i] / localMax[i], 0, 1);
+  }
+}
+
+// The figure's own measured bounding box, used by bodyAlongT() below - no hand-guessed coordinates.
+void computeBodyExtent() {
+  bodyBoxMinX = Float.MAX_VALUE; bodyBoxMaxX = -Float.MAX_VALUE;
+  bodyBoxMinY = Float.MAX_VALUE; bodyBoxMaxY = -Float.MAX_VALUE;
+  for (int y = 0; y < srcImg.height; y++) {
+    for (int x = 0; x < srcImg.width; x++) {
+      if (!bodyMask[x + y * srcImg.width]) continue;
+      bodyBoxMinX = min(bodyBoxMinX, x); bodyBoxMaxX = max(bodyBoxMaxX, x);
+      bodyBoxMinY = min(bodyBoxMinY, y); bodyBoxMaxY = max(bodyBoxMaxY, y);
+    }
+  }
+  bodyAlongIsX = (bodyBoxMaxX - bodyBoxMinX) >= (bodyBoxMaxY - bodyBoxMinY);
+}
+
+// 0 at the head end, 1 at the feet end, along the figure's own longest measured axis - which end is
+// "head" is decided by which end the detected face zone sits closer to, not a hardcoded orientation.
+// Used to boost coverage over specific body regions (e.g. hips/thighs) without any hand-picked
+// coordinates: just a position along the body's own measured extent.
+float bodyAlongT(float x, float y) {
+  float faceCenter = bodyAlongIsX ? (faceZoneX0 + faceZoneX1) * 0.5 : (faceZoneY0 + faceZoneY1) * 0.5;
+  float lo = bodyAlongIsX ? bodyBoxMinX : bodyBoxMinY;
+  float hi = bodyAlongIsX ? bodyBoxMaxX : bodyBoxMaxY;
+  float v = bodyAlongIsX ? x : y;
+  boolean faceNearLo = abs(faceCenter - lo) <= abs(faceCenter - hi);
+  float t = faceNearLo ? (v - lo) / max(1, hi - lo) : (hi - v) / max(1, hi - lo);
+  return constrain(t, 0, 1);
 }
 
 boolean isBody(int x, int y) {
@@ -399,26 +520,85 @@ void buildBgImgKeyed() {
   bgImgKeyed.updatePixels();
 }
 
-// A soft, noise-mottled shading pass over exactly the visible body silhouette - coarse and fine
-// noise layered together for an organic, painterly variation instead of one flat fill color. Drawn
-// after bgImg(Keyed) but before any plant growth, so vines that do cross onto the body (a deliberate
-// few - see canCrossBody) render on top of this texture rather than under it.
+// Grunge-style mottling in light/dark tones derived from bodyWashColor()'s own per-edition target hue
+// (not the original bodyHue) so the shading stays hue-consistent with the wash instead of fighting
+// it. Two noise octaves set the coarse patchwork, a high-frequency third layer roughens the patch
+// edges (smooth edges read as clouds, not grunge), and jointIntensity darkens/intensifies the grain
+// specifically at elbows/knees/wrists/ankles/neck. Drawn after bgImg(Keyed) but before any plant
+// growth, so vines that do cross onto the body render on top of this texture rather than under it.
 void buildBodyTextureLayer() {
   bodyTextureLayer = createGraphics(width, height);
   bodyTextureLayer.beginDraw();
   bodyTextureLayer.clear();
   bodyTextureLayer.noStroke();
-  float cell = max(2, srcPlace[4] * 3);
-  for (int y = 0; y < srcImg.height; y += 3) {
-    for (int x = 0; x < srcImg.width; x += 3) {
-      if (!isBody(x, y)) continue;
-      float coarse = (noise(x * 0.015, y * 0.015) - 0.5) * 70;
-      float fine = (noise(x * 0.06 + 900, y * 0.06 + 900) - 0.5) * 28;
-      float shade = coarse + fine;
-      color tex = shade > 0 ? color(255, 255, 255, constrain(shade * 1.6, 0, 60))
-                            : color(8, 18, 48, constrain(-shade * 1.6, 0, 55));
-      bodyTextureLayer.fill(tex);
-      bodyTextureLayer.rect(srcPlace[0] + x * srcPlace[4], srcPlace[1] + y * srcPlace[4], cell, cell);
+  // A genuine full-body wash so the figure's dominant color actually shifts per edition - bold and
+  // unmistakable, not a subtle cast. Edition 0 stays the pure original blue untouched.
+  color washColor = bodyWashColor();
+  float[] washHsb = Color.RGBtoHSB((int) red(washColor), (int) green(washColor), (int) blue(washColor), null);
+  int lightRgb = Color.HSBtoRGB(washHsb[0], 0.3, 0.94);
+  int darkRgb = Color.HSBtoRGB(washHsb[0], 0.75, 0.24);
+  color lightTone = color((lightRgb >> 16) & 255, (lightRgb >> 8) & 255, lightRgb & 255);
+  color darkTone = color((darkRgb >> 16) & 255, (darkRgb >> 8) & 255, darkRgb & 255);
+  // Joint accent tones - dark cerulean and Prussian blue. Deliberately NOT run through editionTint()
+  // (its hue-PULL logic would turn "blue at the joints" into brown/gold on several editions) -
+  // jointAccentColor gives each edition its own light drift in hue/sat/bri instead, still blue everywhere.
+  color jointCerulean = jointAccentColor(true);
+  color jointPrussian = jointAccentColor(false);
+  float cell = max(2, srcPlace[4] * 2.2);
+  for (int y = 0; y < srcImg.height; y += 2) {
+    for (int x = 0; x < srcImg.width; x += 2) {
+      int i = x + y * srcImg.width;
+      if (!bodyMask[i]) continue;
+      float joint = jointIntensity[i]; // 0..1, high at elbows/knees/wrists/ankles/neck
+      float coarse = noise(x * 0.02, y * 0.02) - 0.5;
+      float mid = noise(x * 0.06 + 900, y * 0.06 + 900) - 0.5;
+      float grit = noise(x * 0.32 + 300, y * 0.32 + 300) - 0.5; // high-frequency grain breaks up smooth blob edges
+      float shade = coarse * 0.55 + mid * 0.28 + grit * (0.5 + joint * 0.7);
+      shade -= joint * 0.4; // biases darker specifically at joints
+      color base = shade > 0 ? lightTone : darkTone;
+      int alp = int(constrain(abs(shade) * (1.7 + joint * 1.4), 0, 1) * (100 + joint * 65));
+      float px = srcPlace[0] + x * srcPlace[4], py = srcPlace[1] + y * srcPlace[4];
+      color cellWash = washColor;
+      // Logo Bloom's body wash mixes in patches of orange-red on top of the magenta base, so both
+      // colors read on the figure rather than one flat hue. Coarse spatial noise (patchy, not
+      // per-pixel) picks where the orange-red patches land.
+      if (editionIndex == 2) {
+        float mixN = noise(x * 0.012 + 5000, y * 0.012 + 5000);
+        if (mixN > 0.45) {
+          float mixAmt = map(mixN, 0.45, 1, 0.3, 0.85);
+          float h2 = lerpHue(washHsb[0], 0.02, mixAmt); // pull from magenta toward orange-red
+          int rgb2 = Color.HSBtoRGB(h2, min(1, washHsb[1] * 1.05), min(1, washHsb[2] * 1.1 + 0.06));
+          cellWash = color((rgb2 >> 16) & 255, (rgb2 >> 8) & 255, rgb2 & 255);
+        }
+      }
+      // Wash alpha 205 (not a lighter partial blend) - at a lighter alpha the original blue pixels
+      // underneath still showed through enough to muddy the target hue toward gray/purple.
+      bodyTextureLayer.fill(red(cellWash), green(cellWash), blue(cellWash), 205);
+      bodyTextureLayer.rect(px, py, cell, cell);
+      bodyTextureLayer.fill(red(base), green(base), blue(base), alp);
+      bodyTextureLayer.rect(px, py, cell, cell);
+      // Dark joint accent restricted to (a) true anatomical joints - neck/knee/wrist/ankle, where the
+      // body is locally thin relative to its surroundings (jointIntensity) - PLUS (b) hip/thigh
+      // explicitly: a hip is anatomically THICK, not thin, so jointIntensity alone can never flag it.
+      // bodyAlongT fills that specific gap. Excludes the face zone and the figure's own decorative
+      // linework (inked much darker/less saturated than the flat body-color fill - detected directly,
+      // not a guessed region) so the accent doesn't fight either of those.
+      boolean inFaceZone = x >= faceZoneX0 && x <= faceZoneX1 && y >= faceZoneY0 && y <= faceZoneY1;
+      color srcPx = srcImg.pixels[i];
+      float[] srcHsb = Color.RGBtoHSB((int) red(srcPx), (int) green(srcPx), (int) blue(srcPx), null);
+      boolean isLinework = srcHsb[2] < 0.3 || srcHsb[1] < 0.18;
+      float alongT = bodyAlongT(x, y);
+      float hipPeak = constrain(1 - abs(alongT - 0.68) / 0.12, 0, 1);
+      boolean trueJoint = joint > 0.55;
+      if (!inFaceZone && !isLinework && (trueJoint || hipPeak > 0)) {
+        float accentStrength = max(trueJoint ? map(joint, 0.55, 1, 0.2, 0.75) : 0, hipPeak * 0.3);
+        if (accentStrength > 0.02) {
+          boolean useCerulean = noise(x * 0.02 + 700, y * 0.02 + 700) > 0.5;
+          color accent = useCerulean ? jointCerulean : jointPrussian;
+          bodyTextureLayer.fill(red(accent), green(accent), blue(accent), int(accentStrength * 150));
+          bodyTextureLayer.rect(px, py, cell, cell);
+        }
+      }
     }
   }
   bodyTextureLayer.endDraw();
@@ -497,21 +677,44 @@ void buildBodyContourPlants() {
   ArrayList<PVector> chosen = organicSubsample(edges, bodyContourCell, bodyContourKeepProb);
   float[] place = computePlacement(srcImg, srcScale, srcOffsetX, srcOffsetY);
   for (PVector v : chosen) {
+    // Extreme joints (finger-scale) pack many silhouette edge points into a tiny area - each one
+    // sprouting its own flower/motif there would stack them until they fuse into one solid blob.
+    // Thin density steeply wherever the body is locally very thin relative to its surroundings.
+    int vi = constrain(int(v.x), 0, srcImg.width - 1) + constrain(int(v.y), 0, srcImg.height - 1) * srcImg.width;
+    float joint = jointIntensity[vi];
+    if (joint > 0.65 && random(1) < map(joint, 0.65, 1, 0.3, 0.88)) continue;
+    // Root a short distance OUTSIDE the body, in the ground the edge point sits on, rather than
+    // exactly on the boundary pixel itself - rooting right on the silhouette line reads as "starting
+    // from the black edge" instead of growing up from the ground toward the figure.
+    float outward = v.z + PI;
+    float offsetDist = random(4, 15);
+    float rx = v.x + cos(outward) * offsetDist;
+    float ry = v.y + sin(outward) * offsetDist;
+    if (isBody(int(rx), int(ry))) { rx = v.x; ry = v.y; } // concave-area fallback
+
     color c = srcImg.get((int) v.x, (int) v.y);
-    float cx = place[0] + v.x * place[4];
-    float cy = place[1] + v.y * place[4];
+    float cx = place[0] + rx * place[4];
+    float cy = place[1] + ry * place[4];
     boolean inFace = v.x >= faceZoneX0 && v.x <= faceZoneX1 && v.y >= faceZoneY0 && v.y <= faceZoneY1;
-    if (inFace && random(1) < 0.5) continue; // thin the outline vines around the face too
+    if (inFace && random(1) < 0.2) continue; // thin the outline vines around the face too
     Plant p = new Plant(cx, cy, c, true);
     p.sizeScale = random(0.55, 0.95);       // sturdier than a background creeper, so it reads on the figure
     p.maxSteps = inFace ? int(random(12, 30)) : int(random(45, 110));
     // Only a small, deliberate fraction of boundary vines are actually permitted to creep onto the
     // body at all (canCrossBody - grow() enforces this as a hard wall for everyone else). This is
     // what keeps on-body coverage feeling like "here and there, randomly" rather than "most vines
-    // near the edge eventually reach across it."
-    float inwardChance = inFace ? 0.04 : 0.14;
+    // near the edge eventually reach across it." bodyAlongT approximates head(0)-to-feet(1) position
+    // from the body's own measured extent: the middle band (hip/thigh) gets extra coverage, and the
+    // crown eases up only right at the very top of the head.
+    float alongT = bodyAlongT(v.x, v.y);
+    float crownEase = constrain(alongT / 0.09, 0, 1);
+    float regionBoost = lerp(1.8, 2.8, crownEase * crownEase);
+    float loinPeak = constrain(1 - abs(alongT - 0.68) / 0.16, 0, 1);
+    regionBoost *= 1 + 0.35 * loinPeak;
+    regionBoost += joint * 1.1; // joint-driven bonus organically lifts density at wrist/ankle/neck/knee too
+    float inwardChance = (inFace ? 0.05 : 0.2) * regionBoost;
     boolean inward = random(1) < inwardChance;
-    if (inward) p.heading = v.z + random(-0.3, 0.3);
+    if (inward) p.heading = v.z + random(-0.3, 0.3); // aim back toward the body from its new ground position
     p.canCrossBody = inward;
     bodyContourPlants.add(p);
   }
@@ -1010,14 +1213,14 @@ void drawDaisyFlower(PGraphics pg, Plant p) {
   pg.noStroke();
   for (int k = 0; k < petals; k++) {
     pg.pushMatrix();
-    pg.rotate(TWO_PI / petals * k + frameCount * 0.01 + p.swayPhase);
+    pg.rotate(TWO_PI / petals * k + stillFrame * 0.01 + p.swayPhase);
     pg.fill(outer);
     drawPetal(pg, sz * 0.75, sz * 0.34 * pw);
     pg.popMatrix();
   }
   for (int k = 0; k < petals; k++) { // inner ring, smaller and offset, for depth
     pg.pushMatrix();
-    pg.rotate(TWO_PI / petals * (k + 0.5) + frameCount * 0.01 + p.swayPhase);
+    pg.rotate(TWO_PI / petals * (k + 0.5) + stillFrame * 0.01 + p.swayPhase);
     pg.fill(inner);
     drawPetal(pg, sz * 0.42, sz * 0.2 * pw);
     pg.popMatrix();
@@ -1041,7 +1244,7 @@ void drawBellFlower(PGraphics pg, Plant p) {
   color inner = lerpColor(outer, color(255, 250, 235), 0.35);
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
-  pg.rotate(sin(frameCount * 0.02 + p.swayPhase) * 0.15 + 0.25); // droops to one side
+  pg.rotate(sin(stillFrame * 0.02 + p.swayPhase) * 0.15 + 0.25); // droops to one side
   pg.noStroke();
   pg.fill(outer);
   pg.beginShape();
@@ -1064,7 +1267,7 @@ void drawStarFlower(PGraphics pg, Plant p) {
   color outer = flowerColor(p);
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
-  pg.rotate(frameCount * 0.006 + p.swayPhase);
+  pg.rotate(stillFrame * 0.006 + p.swayPhase);
   pg.noStroke();
   pg.fill(outer);
   pg.beginShape();
@@ -1139,7 +1342,7 @@ void drawTrumpetFlower(PGraphics pg, Plant p) {
   color inner = lerpColor(outer, color(255, 250, 235), 0.4);
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
-  pg.rotate(sin(frameCount * 0.015 + p.swayPhase) * 0.1);
+  pg.rotate(sin(stillFrame * 0.015 + p.swayPhase) * 0.1);
   pg.noStroke();
   pg.fill(outer);
   pg.beginShape();
@@ -1222,7 +1425,7 @@ void drawCrossFlower(PGraphics pg, Plant p) {
   pg.fill(outer);
   for (int k = 0; k < 4; k++) {
     pg.pushMatrix();
-    pg.rotate(HALF_PI * k + frameCount * 0.01 + p.swayPhase);
+    pg.rotate(HALF_PI * k + stillFrame * 0.01 + p.swayPhase);
     drawPetal(pg, sz * 0.6, sz * 0.3);
     pg.popMatrix();
   }
@@ -1244,7 +1447,7 @@ void drawFringedFlower(PGraphics pg, Plant p) {
   int spikes = 11;
   for (int k = 0; k < spikes; k++) {
     pg.pushMatrix();
-    pg.rotate(TWO_PI / spikes * k + frameCount * 0.006 + p.swayPhase);
+    pg.rotate(TWO_PI / spikes * k + stillFrame * 0.006 + p.swayPhase);
     pg.fill(outer);
     drawPetal(pg, sz * 0.62, sz * 0.16); // softer/shorter rays than before - less sharp and artificial
     pg.popMatrix();
@@ -1293,7 +1496,7 @@ void drawPinwheelFlower(PGraphics pg, Plant p) {
   pg.fill(outer);
   for (int k = 0; k < petals; k++) {
     pg.pushMatrix();
-    pg.rotate(TWO_PI / petals * k + frameCount * 0.01 + p.swayPhase);
+    pg.rotate(TWO_PI / petals * k + stillFrame * 0.01 + p.swayPhase);
     pg.beginShape();
     pg.vertex(0, 0);
     pg.bezierVertex(sz * 0.55, -sz * 0.08, sz * 0.8, sz * 0.22, sz * 0.45, sz * 0.55);
@@ -1317,7 +1520,7 @@ void drawPetal(PGraphics pg, float len, float wid) {
 float swayOffset(Plant p, int i, int n) {
   float t = (float) i / max(1, n - 1);
   float amt = pow(t, 1.5) * 3.0; // more movement near the tip, root stays anchored
-  return sin(frameCount * 0.03 + p.swayPhase + i * 0.08) * amt * edSwayMul();
+  return sin(stillFrame * 0.03 + p.swayPhase + i * 0.08) * amt * edSwayMul();
 }
 
 float jitterOffset(Plant p, int i) {
@@ -1343,6 +1546,35 @@ color shiftColor(color c) {
   return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
 }
 
+// Integer hash, NOT noise() - noise()'s output isn't uniform across 0..1, it clusters tightly around
+// 0.4-0.6, which quietly collapsed a lot of "per-seed variety" (jitter, badge/coin/panel/bag colors,
+// brand-name syllables) toward nearly the same value every time. A hash spreads evenly across the
+// full range, so these genuinely cover their whole range from seed to seed.
+int hash32(int x) {
+  x = ((x >>> 16) ^ x) * 0x45d9f3b;
+  x = ((x >>> 16) ^ x) * 0x45d9f3b;
+  x = (x >>> 16) ^ x;
+  return x;
+}
+float hashUnit(int seed, int salt) {
+  return (hash32(seed * 92821 + salt) & 0x7fffffff) / (float) 0x7fffffff;
+}
+
+// Draws the current edition name + BUILD_TAG as a small top-left label on the LIVE canvas only - never
+// part of any exported print (saveHighResPrint/exportAllEditions build their own PGraphics and never
+// call this). A screenshot of the live view can then prove exactly which code produced it, which is
+// the only reliable way to tell a genuinely-unfixed bug from feedback on a stale build.
+void drawBuildLabel() {
+  noStroke();
+  fill(0, 0, 0, 150);
+  rect(0, 0, width, 26);
+  fill(255);
+  textFont(uiFont);
+  textSize(15);
+  textAlign(LEFT, CENTER);
+  text("Edition " + editionIndex + ": " + editionNames[editionIndex] + "   |   build " + BUILD_TAG, 10, 13);
+}
+
 // Blend target is now the plant's SPECIES green (one of 5 distinct natural tones - see naturalGreens)
 // rather than one fixed dark/light green, and blended in more heavily so that tone actually reads
 // against the (often pale, depth-hazed) base color instead of being washed out by it.
@@ -1351,23 +1583,28 @@ color shiftColor(color c) {
 // - real foliage varies in tonal value even within one species.
 color jitterTone(color c, int seed) {
   float[] hsb = Color.RGBtoHSB((int) red(c), (int) green(c), (int) blue(c), null);
-  float jH = (noise(seed * 0.013) - 0.5) * 0.05;
+  float jH = (hashUnit(seed, 2) - 0.5) * 0.05;
   // Biased to lift rather than dull - the depth haze elsewhere already pulls distant plants toward
   // pale/white, so this jitter doesn't need to be symmetric; skewing positive keeps greens reading
   // as fresh instead of compounding into a general grayish murk.
-  float jS = map(noise(seed * 0.013 + 200), 0, 1, -0.05, 0.2);
-  float jB = map(noise(seed * 0.013 + 400), 0, 1, -0.08, 0.18);
+  float jS = map(hashUnit(seed, 3), 0, 1, -0.05, 0.2);
+  float jB = map(hashUnit(seed, 4), 0, 1, -0.08, 0.18);
   int rgb = Color.HSBtoRGB(hsb[0] + jH, constrain(hsb[1] + jS, 0.3, 1), constrain(hsb[2] + jB, 0.25, 1));
   return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
 }
 
+// Blend weight toward the species green raised (0.55/0.7 -> 0.8/0.9) - a lighter blend let
+// getBaseSourceColor()'s narrow base dilute the species-green palette back toward sameness; at
+// 0.8-0.9 the species tone actually dominates, which is what real per-species green variety needs.
 color stemColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[SPECIES[p.speciesIndex].greenTone], p.paletteSlot);
-  return editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.55)));
+  PVector root = p.path.get(0);
+  return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.8))), root.x, root.y);
 }
 color leafColor(Plant p) {
   color baseGreen = jitterTone(naturalGreens[SPECIES[p.speciesIndex].greenTone], p.paletteSlot + 777);
-  return editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.7)));
+  PVector root = p.path.get(0);
+  return localizedBreak(editionTint(shiftColor(lerpColor(getBaseSourceColor(p), baseGreen, 0.9))), root.x, root.y);
 }
 
 // ---------------- Edition flora identity ----------------
@@ -1388,14 +1625,107 @@ color editionTint(color c) {
   float[] hsb = Color.RGBtoHSB((int) red(c), (int) green(c), (int) blue(c), null);
   float h = hsb[0], s = hsb[1], b = hsb[2];
   switch (editionIndex) {
-    case 1: s *= 0.45; b = min(1, b * 1.08); h = lerpHue(h, 0.11, 0.4); break;              // paper & ink: sepia-olive, receipt-toned
-    case 2: s = min(1, s * 1.6 + 0.15); h = lerpHue(h, h + 0.06, 1); b = min(1, b * 1.15); break; // pop candy: loud, saturated, brand-bright
-    case 3: h = lerpHue(h, 0.52, 0.45); s = min(1, s * 1.1); b *= 0.92; break;              // urban dusk: teal-washed streetside green
+    case 1: // paper & ink: sepia-olive base, but green hues get pushed toward warm rust/terracotta
+             // instead of just desaturated - a real contrasting complementary color, not a wash,
+             // which is what actually breaks a green cast rather than just dimming it.
+             boolean barcodeGreen = h > 0.18 && h < 0.46;
+             if (barcodeGreen) { h = lerpHue(h, 0.06, 0.55); s = min(1, s * 1.2 + 0.08); }
+             else { h = lerpHue(h, 0.11, 0.3); s = min(1, s * 0.85 + 0.05); }
+             b = min(1, b * 1.06);
+             break;
+    case 2: // pop candy: loud, saturated, brand-bright - but greens AND cerulean/blue-green (the most
+             // common foliage hues) get a much smaller boost than everything else, so one bright tone
+             // doesn't dominate the edition just because it's the most common color underneath.
+             boolean isGreenish = h > 0.18 && h < 0.53;
+             s = min(1, s * (isGreenish ? 1.15 : 1.6) + (isGreenish ? 0.03 : 0.15));
+             h = lerpHue(h, h + 0.06, 1);
+             b = min(1, b * 1.15);
+             break;
+    case 3: h = lerpHue(h, 0.52, 0.22); s = min(1, s * 1.1); b *= 0.92; break;              // urban dusk: a teal lean, not a teal wash
     case 4: h = lerpHue(h, 0.12, 0.18); s = min(1, s * 1.2 + 0.04); b = min(1, b * 1.05); break; // warm cast only — flora keeps its varied colors
-    case 5: s *= 0.35; h = lerpHue(h, 0.55, 0.4); b = min(1, b * 1.12); break;              // bleached synthetic: pale, plastic-cool
+    case 5: s = min(1, s * 0.65 + 0.05); h = lerpHue(h, 0.55, 0.22); b = min(1, b * 1.1); break; // bleached synthetic, cool-leaning
   }
   h = h - floor(h);
   int rgb = Color.HSBtoRGB(h, constrain(s, 0, 1), constrain(b, 0, 1));
+  return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// The body's joint-accent blue (dark cerulean / Prussian blue), varied per edition WITHOUT running
+// through editionTint()'s hue-pull - that pull is tuned for flora and would turn this into brown or
+// gold on several editions. A small per-edition hue/sat/bri drift instead: every edition still reads
+// as genuinely its own mood on the figure, but the blue never disappears into the edition's flora palette.
+color jointAccentColor(boolean cerulean) {
+  float h = cerulean ? 0.56 : 0.60;
+  float s = cerulean ? 0.72 : 0.66;
+  float b = cerulean ? 0.36 : 0.24;
+  switch (editionIndex) {
+    case 1: s *= 0.85; b *= 1.15; break;                          // ink-toned, slightly muted - paper & ink mood
+    case 2: h += 0.02; s = min(1, s * 1.25); b *= 1.1; break;      // pop-candy vividness
+    case 3: h -= 0.03; b *= 0.85; break;                           // urban dusk lean, darker
+    case 4: h += 0.05; s = min(1, s * 1.1); b *= 1.2; break;       // gilded warm edge, brighter
+    case 5: s *= 0.55; b = min(1, b * 1.4); break;                 // bleached synthetic, pale
+  }
+  int rgb = Color.HSBtoRGB(h, constrain(s, 0, 1), constrain(b, 0, 1));
+  return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// The main body wash color. A full, decisive target hue per edition (not a partial lerp from blue) -
+// each edition gets a genuinely different color family, not a shade of the same one. Edition 0 keeps
+// the true original detected hue, untouched.
+color bodyWashColor() {
+  if (editionIndex == 0) {
+    int rgb = Color.HSBtoRGB(bodyHue, 0.65, 0.6);
+    return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  }
+  float h, s, b;
+  switch (editionIndex) {
+    case 1: h = 0.06; s = 0.62; b = 0.58; break;         // burnt sienna / terracotta - paper & ink mood
+    case 2: h = 0.90; s = 0.88; b = 0.76; break;         // brighter hot magenta / fuchsia - pop candy
+    case 3: h = 0.45; s = 0.68; b = 0.5;  break;         // deep teal-emerald - urban dusk
+    case 4: h = 0.11; s = 0.72; b = 0.62; break;         // rich amber / gold - gilded currency
+    default: h = 0.52; s = 0.38; b = 0.78; break;        // pale ice-blue/cyan - bleached synthetic plastic
+  }
+  int rgb = Color.HSBtoRGB(h, s, b);
+  return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// Most of the canvas keeps each edition's base cast (editionTint above); a spatially-coherent noise
+// field carves out patches (not per-pixel noise - real patches, so it reads as organic variation
+// rather than static) that lean toward a genuinely DIFFERENT, contrasting color, breaking the
+// uniformity a flat edition-wide tint alone would otherwise produce.
+color localizedBreak(color c, float px, float py) {
+  if (editionIndex < 1 || editionIndex > 5) return c;
+  float n = noise(px * 0.003 + editionIndex * 211, py * 0.003 + 500);
+  float breakThreshold = (editionIndex == 1 || editionIndex == 3) ? 0.5 : 0.6;
+  if (n < breakThreshold) return c;
+  float[] hsb = Color.RGBtoHSB((int) red(c), (int) green(c), (int) blue(c), null);
+  float amt = map(n, breakThreshold, 1, 0.22, 0.68);
+  float targetHue;
+  float briMul = 1.0;
+  if (editionIndex == 1) {
+    // Turquoise-blue AND light purple, alternating by a second spatial noise field - counters a
+    // green-dominant foreground without pulling everything toward one single hue.
+    boolean coolPick = noise(px * 0.006 + 930, py * 0.006) < 0.5;
+    targetHue = coolPick ? 0.5 : 0.78;
+  } else if (editionIndex == 2) {
+    targetHue = 0.08; // warm orange - complementary counterweight to the blue/cerulean dominance
+  } else if (editionIndex == 3) {
+    // Dark Prussian blue AND purple, alternating - genuinely different sub-hues from the dominant
+    // turquoise-green, rather than a jarring warm swap.
+    boolean bluePick = noise(px * 0.006 + 940, py * 0.006) < 0.5;
+    targetHue = bluePick ? 0.6 : 0.76;
+    briMul = bluePick ? 0.75 : 0.9;
+  } else if (editionIndex == 4) {
+    boolean coolPick = noise(px * 0.006 + 900, py * 0.006) < 0.5;
+    targetHue = coolPick ? 0.55 : 0.82; // dark cerulean OR magenta-purple
+    briMul = 0.82;
+  } else {
+    targetHue = 0.07; // warm orange - complement to Plastic's cool cast
+  }
+  float h = lerpHue(hsb[0], targetHue, amt);
+  float s = min(1, hsb[1] * 1.15 + 0.08);
+  float b = constrain(hsb[2] * briMul, 0, 1);
+  int rgb = Color.HSBtoRGB(h, s, b);
   return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
 }
 
@@ -1610,8 +1940,20 @@ void drawConsumerLayer(PGraphics pg) {
 }
 
 // Floors an overlay's driving size so tiny flowers still carry a legible, clearly visible motif.
+// Lowered from 18 - at 18 this floor dominated almost every motif regardless of the flower's actual
+// scale, flattening out size variety; 9 only kicks in for genuinely tiny flowers.
 float visScale(Plant p) {
-  return max(p.flowerSize * p.sizeScale, 18);
+  return max(p.flowerSize * p.sizeScale, 9);
+}
+
+// A flat floor (like visScale() alone) quietly erases depth-of-field: p.flowerSize*p.sizeScale rarely
+// exceeds ~17-20px even for near/large flowers, so almost every motif landed on the same flat floor
+// regardless of depth - forefront and background motifs ending up the same size. This scales the floor
+// itself by the motif's own canvas-Y position (same near=bottom/large, far=top/small convention the
+// meadow already uses), so depth is preserved even where visScale() alone would be floored out.
+float depthVisScale(Plant p, float canvasY, float minFloor, float maxFloor) {
+  float t = constrain(canvasY / (float) height, 0, 1);
+  return max(visScale(p), lerp(minFloor, maxFloor, t));
 }
 
 // The main plant grid now spans the whole area outside the figure (thousands of plants), so gating
@@ -1637,7 +1979,7 @@ void drawBarcodeTag(PGraphics pg, Plant p) {
   float tagW = sz * 2.0, tagH = sz * 1.05;
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y + sz * 1.2);
-  pg.rotate(sin(frameCount * 0.02 + p.swayPhase) * 0.12); // tag sways like it's hanging off a thread
+  pg.rotate(sin(stillFrame * 0.02 + p.swayPhase) * 0.12); // tag sways like it's hanging off a thread
   pg.stroke(50, 50, 50, 220);
   pg.strokeWeight(1.4);
   pg.line(0, -sz * 1.2, 0, -tagH * 0.5);
@@ -1688,7 +2030,7 @@ void drawLogoBadge(PGraphics pg, Plant p) {
   color badge = badgeCols[p.varietySeed % badgeCols.length];
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
-  pg.rotate(frameCount * 0.004 + p.swayPhase * 0.3); // slow corporate spin
+  pg.rotate(stillFrame * 0.004 + p.swayPhase * 0.3); // slow corporate spin
   pg.noStroke();
   pg.fill(badge);
   pg.ellipse(0, 0, sz * 1.8, sz * 1.8);
@@ -1918,8 +2260,8 @@ void drawCoinCenter(PGraphics pg, Plant p) {
 
 void drawFallingCoin(PGraphics pg, PVector c) {
   float speed = 0.6 + noise(c.z) * 1.2;
-  float y = (c.y + frameCount * speed) % (height + 60) - 30;
-  float wobble = sin(frameCount * 0.03 + c.z) * 10;
+  float y = (c.y + stillFrame * speed) % (height + 60) - 30;
+  float wobble = sin(stillFrame * 0.03 + c.z) * 10;
   float sz = 18 + noise(c.z + 5) * 18;
   boolean gold = int(c.z * 31) % 2 == 0;
   color face = gold ? color(230, 190, 90) : color(212, 216, 224);
@@ -1928,7 +2270,7 @@ void drawFallingCoin(PGraphics pg, PVector c) {
   String sym = currencySymbols[int(c.z * 17) % currencySymbols.length];
   pg.pushMatrix();
   pg.translate(c.x + wobble, y);
-  pg.rotate(frameCount * 0.05 + c.z);
+  pg.rotate(stillFrame * 0.05 + c.z);
   pg.fill(face);
   pg.stroke(rim);
   pg.strokeWeight(1.5);
@@ -1969,7 +2311,7 @@ void drawPlasticOverlay(PGraphics pg, Plant p) {
       pg.pushMatrix();
       pg.translate(base.x + sway, base.y);
       // an actual carrier bag snagged on the stem, dangling and swinging below its handles
-      pg.rotate(sin(frameCount * 0.03 + lf.angle * 3) * 0.18 + (lf.angle > 0 ? 0.12 : -0.12));
+      pg.rotate(sin(stillFrame * 0.03 + lf.angle * 3) * 0.18 + (lf.angle > 0 ? 0.12 : -0.12));
       pg.noFill();
       pg.stroke(bc, 230);
       pg.strokeWeight(max(1, s * 0.07));
