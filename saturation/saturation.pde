@@ -53,7 +53,7 @@ int activeTarget = 0; // 0 = background image, 1 = source image (which one arrow
 
 boolean recording = false;
 VideoExport videoExport;
-int printScale = 3; // 1920x1080 * 3 = 5760x3240px, plenty for large-format print
+int printScale = 6; // 1920x1080 * 6 = 11520x6480px - Giclee-print resolution
 
 // ---------- Reproducibility ----------
 // Every plant's shape and the whole scene's layout comes from random()/noise() calls seeded here,
@@ -71,7 +71,7 @@ int sketchSeed = 42;
 final int stillFrame = 0;
 // Bumped every round and drawn as an on-screen label (see draw()) so a screenshot can prove which
 // code actually produced it - never baked into any exported print/JPEG.
-final String BUILD_TAG = "v1-rebuild-infra";
+final String BUILD_TAG = "v2-rebuild-complete";
 
 // ---------- Consumer-culture layer ----------
 // A second, separable layer drawn on top of the botanical scene above. The plant/flower growth
@@ -126,6 +126,7 @@ void setup() {
   buildPalettes();
   buildCuratedBarcodePalette();
   buildCuratedAdPalette();
+  buildCuratedPlasticPalette();
   buildAll();
 
   java.io.File outDir = new java.io.File(sketchPath("output"));
@@ -2466,7 +2467,11 @@ color adTextColor(color bg) {
 }
 
 // Edition 4 — Currency Bloom: flower centers become embossed coins; loose coins drift down the scene.
+// Reset the shared draw-order counter here so coin centers AND falling coins pull from ONE continuous
+// non-repeating sequence (see nextCurrencyIndex) across the whole edition.
+int currencyDrawCounter = 0;
 void drawCurrencyBloom(PGraphics pg) {
+  currencyDrawCounter = 0;
   for (Plant p : plants) drawCoinCenter(pg, p);
   for (Plant p : bodyContourPlants) drawCoinCenter(pg, p);
   for (Plant p : contourPlants) drawCoinCenter(pg, p);
@@ -2474,20 +2479,104 @@ void drawCurrencyBloom(PGraphics pg) {
   for (PVector c : coinDrops) drawFallingCoin(pg, c);
 }
 
-// World-currency mint: symbols from many currencies, struck in gold or silver. Index selection is
-// deterministic per coin so each one keeps its identity between frames.
-String[] currencySymbols = { "$", "€", "£", "¥", "₹", "₩", "₽", "¢" }; // $ € £ ¥ ₹ ₩ ₽ ¢
+// A broad, genuinely global set of real currency symbols/codes (not just 5-6 major ones).
+String[] currencySymbols = {
+  "$", "€", "£", "¥", "₹", "₩", "₽", "¢", "₺", "₦", "₴", "₪", "฿", "₫", "₱", "R", "₲", "₡", "₵", "₮",
+  "₭", "₸", "₼", "₾", "Kč", "zł", "Ft", "lei", "Fr", "kr", "R$", "₨", "K", "₧", "Rp", "din"
+};
+// Mint tones indexed 1:1 with currencySymbols (cycling through 12 distinct metals) - each currency
+// keeps the SAME tone every time it appears, so it reads as its own coin identity.
+color[] mintFaces = {
+  color(230, 190, 90),  color(212, 216, 224), color(205, 145, 95),  color(180, 150, 90),
+  color(150, 155, 160), color(225, 210, 180), color(170, 120, 70),  color(140, 170, 175),
+  color(205, 175, 210), color(90, 100, 115),  color(235, 225, 150), color(160, 130, 180)
+};
+color mintFaceFor(int symIndex) { return mintFaces[symIndex % mintFaces.length]; }
+color mintRimFor(int symIndex) { return lerpColor(mintFaceFor(symIndex), color(20, 15, 10), 0.42); }
+color mintInkFor(int symIndex) { return lerpColor(mintFaceFor(symIndex), color(15, 10, 5), 0.62); }
+
+// Assigns the NEXT currency in a fixed non-repeating permutation of currencySymbols, instead of
+// hashing each coin's own seed independently (which, with many coins pulling from the same pool,
+// produces collisions by pigeonhole). Step 11 is coprime with both currencySymbols.length (36) and
+// mintFaces.length (12), so as long as the total coin count for this render stays at or under 12
+// (enforced in buildConsumerLayer), both the currency symbol AND its metal tone are guaranteed
+// distinct for every coin.
+int nextCurrencyIndex() {
+  int idx = (currencyDrawCounter * 11 + sketchSeed) % currencySymbols.length;
+  if (idx < 0) idx += currencySymbols.length;
+  currencyDrawCounter++;
+  return idx;
+}
+
+// Struck-metal engraving effect: a dark offset "recessed shadow" pass and a light offset "catch-light"
+// pass, then the main ink on top - reads as debossed/embossed engraving instead of a flat printed glyph.
+void drawEmbossedGlyph(PGraphics pg, String s, float sz, float yOff, color ink) {
+  pg.fill(lerpColor(ink, color(0), 0.45));
+  pg.text(s, sz * 0.025, yOff + sz * 0.03);
+  pg.fill(lerpColor(ink, color(255), 0.55));
+  pg.text(s, -sz * 0.02, yOff - sz * 0.02);
+  pg.fill(ink);
+  pg.text(s, 0, yOff);
+}
+
+// Struck-metal texture: concentric fading rings fake a radial sheen, a tight bright specular highlight
+// sits offset like a single light source, then scratches (bright and dark) plus fine speckle keep the
+// face from reading as a flat, evenly-lit fill.
+void drawCoinTexture(PGraphics pg, float sz, int seed) {
+  int rings = 5;
+  pg.noStroke();
+  for (int i = 0; i < rings; i++) {
+    float tt = i / (float) (rings - 1);
+    float r = sz * lerp(0.02, 0.5, tt);
+    int alp = int(lerp(60, 0, tt));
+    pg.fill(255, 255, 255, alp);
+    pg.ellipse(-sz * 0.08, -sz * 0.1, r * 2, r * 2);
+  }
+  pg.fill(255, 255, 255, 130);
+  pg.ellipse(-sz * 0.18, -sz * 0.22, sz * 0.32, sz * 0.14);
+  pg.fill(255, 255, 255, 60);
+  pg.ellipse(-sz * 0.14, -sz * 0.16, sz * 0.55, sz * 0.24);
+  pg.noFill();
+  pg.stroke(255, 255, 255, 55);
+  pg.strokeWeight(max(1, sz * 0.02));
+  for (int i = 0; i < 5; i++) {
+    float a0 = noise(seed * 0.03 + i) * TWO_PI;
+    float r = sz * (0.15 + 0.25 * noise(seed * 0.03 + i + 10));
+    pg.arc(0, 0, r * 2, r * 2, a0, a0 + PI * (0.25 + 0.25 * noise(seed * 0.03 + i + 60)));
+  }
+  pg.stroke(0, 0, 0, 30);
+  pg.strokeWeight(max(1, sz * 0.012));
+  for (int i = 0; i < 3; i++) {
+    float a0 = noise(seed * 0.04 + i + 70) * TWO_PI;
+    float r = sz * (0.2 + 0.22 * noise(seed * 0.04 + i + 80));
+    pg.arc(0, 0, r * 2, r * 2, a0, a0 + PI * 0.3);
+  }
+  pg.noStroke();
+  for (int i = 0; i < 12; i++) {
+    float a = noise(seed * 0.05 + i + 20) * TWO_PI;
+    float r = noise(seed * 0.05 + i + 30) * sz * 0.48;
+    pg.fill(0, 0, 0, 25);
+    pg.ellipse(cos(a) * r, sin(a) * r, 1.6, 1.6);
+  }
+}
 
 void drawCoinCenter(PGraphics pg, Plant p) {
-  if (!(p.hasFlower && p.grown && motifGate(p))) return;
+  // Tightened to 1-in-6: the hard total cap in buildConsumerLayer/nextCurrencyIndex does the actual
+  // repeat-prevention work, so this gate just keeps the coin count low enough that the 12-coin budget
+  // isn't blown by coin centers alone, leaving room for the falling coins too.
+  if (!(p.hasFlower && p.grown && motifGate(p) && p.varietySeed % 6 == 0)) return;
+  if (currencyDrawCounter >= currencySymbols.length) return; // sequence exhausted, don't wrap into a repeat
   PVector tip = p.path.get(p.path.size() - 1);
   float sway = swayOffset(p, p.path.size() - 1, p.path.size());
-  float sz = visScale(p);
-  boolean gold = (p.varietySeed / 11) % 2 == 0;
-  color face = gold ? color(230, 190, 90) : color(212, 216, 224);
-  color rim = gold ? color(150, 110, 30) : color(120, 126, 138);
-  color ink = gold ? color(110, 80, 20) : color(70, 76, 88);
-  String sym = currencySymbols[p.varietySeed % currencySymbols.length];
+  // Depth is the DOMINANT size driver (not a max()-against-natural-size floor, which could let a
+  // background coin on a large flower render as big as a foreground one).
+  float depthT = constrain(tip.y / (float) height, 0, 1);
+  float sz = lerp(18, 64, depthT);
+  int symIndex = nextCurrencyIndex();
+  color face = jitterTone(mintFaceFor(symIndex), p.paletteSlot);
+  color rim = mintRimFor(symIndex);
+  color ink = mintInkFor(symIndex);
+  String sym = currencySymbols[symIndex];
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
   pg.fill(face);
@@ -2502,25 +2591,28 @@ void drawCoinCenter(PGraphics pg, Plant p) {
     float r1 = sz * 0.4, r2 = sz * 0.5;
     pg.line(cos(a) * r1, sin(a) * r1, cos(a) * r2, sin(a) * r2);
   }
+  drawCoinTexture(pg, sz, p.paletteSlot);
   pg.noStroke();
-  pg.fill(ink);
   pg.textFont(uiFont);
   pg.textSize(sz * 0.52);
   pg.textAlign(CENTER, CENTER);
-  pg.text(sym, 0, sz * 0.02);
+  drawEmbossedGlyph(pg, sym, sz, sz * 0.02, ink);
   pg.popMatrix();
 }
 
 void drawFallingCoin(PGraphics pg, PVector c) {
-  float speed = 0.6 + noise(c.z) * 1.2;
+  int coinSeed = int(c.z * 997);
+  float speed = 0.6 + hashUnit(coinSeed, 131) * 1.2;
   float y = (c.y + stillFrame * speed) % (height + 60) - 30;
   float wobble = sin(stillFrame * 0.03 + c.z) * 10;
-  float sz = 18 + noise(c.z + 5) * 18;
-  boolean gold = int(c.z * 31) % 2 == 0;
-  color face = gold ? color(230, 190, 90) : color(212, 216, 224);
-  color rim = gold ? color(150, 110, 30) : color(120, 126, 138);
-  color ink = gold ? color(110, 80, 20) : color(70, 76, 88);
-  String sym = currencySymbols[int(c.z * 17) % currencySymbols.length];
+  float depthT = constrain(y / (float) height, 0, 1);
+  float sz = lerp(18, 64, depthT) + hashUnit(coinSeed, 139) * 10;
+  if (currencyDrawCounter >= currencySymbols.length) return; // sequence exhausted, don't wrap into a repeat
+  int symIndex = nextCurrencyIndex();
+  color face = mintFaceFor(symIndex);
+  color rim = mintRimFor(symIndex);
+  color ink = mintInkFor(symIndex);
+  String sym = currencySymbols[symIndex];
   pg.pushMatrix();
   pg.translate(c.x + wobble, y);
   pg.rotate(stillFrame * 0.05 + c.z);
@@ -2528,17 +2620,58 @@ void drawFallingCoin(PGraphics pg, PVector c) {
   pg.stroke(rim);
   pg.strokeWeight(1.5);
   pg.ellipse(0, 0, sz, sz * 0.85); // slight squash so the spin reads as a tumbling coin
+  drawCoinTexture(pg, sz, int(c.z * 999));
   pg.noStroke();
-  pg.fill(ink);
   pg.textFont(uiFont);
   pg.textSize(sz * 0.5);
   pg.textAlign(CENTER, CENTER);
-  pg.text(sym, 0, 0);
+  drawEmbossedGlyph(pg, sym, sz, 0, ink);
   pg.popMatrix();
 }
 
-// Edition 5 — Plastic Garden: half the leaves get a plastic-bag skin; flower centers become bottle caps.
+// Same guaranteed-non-repeat technique as curatedAdPalette, for Plastic Garden's bags and caps.
+color[] curatedPlasticPalette = new color[48];
+void buildCuratedPlasticPalette() {
+  float[][] svCombos = { {0.55, 0.92}, {0.4, 0.78}, {0.7, 0.62}, {0.3, 0.95} }; // bright, muted, deeper, pastel plastic tones
+  for (int i = 0; i < curatedPlasticPalette.length; i++) {
+    float h = (i * 0.618034) % 1.0;
+    float[] sv = svCombos[i % svCombos.length];
+    int rgb = Color.HSBtoRGB(h, sv[0], sv[1]);
+    curatedPlasticPalette[i] = color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  }
+}
+// Discrete, deliberately-spread size multipliers for bags/caps (replacing a continuous hash range) so
+// "never repeat dimensions" is an actual guarantee within one cycle.
+float[] curatedSizeMul = { 0.82, 1.28, 0.95, 1.14, 0.88, 1.35, 1.02, 0.9, 1.2, 1.08, 0.96, 1.3 };
+int bagDrawCounter = 0;
+int capDrawCounter = 0;
+// Positions of every bag/cap already drawn this edition, so a new one can check it isn't landing on
+// top of or right next to an existing one. Bags and caps share this one list so a cap checks against
+// nearby bags too, not just other caps.
+ArrayList<PVector> plasticPlaced = new ArrayList<PVector>();
+boolean tooCloseToPlastic(float x, float y, float margin) {
+  for (PVector q : plasticPlaced) if (dist(x, y, q.x, q.y) < margin) return true;
+  return false;
+}
+
+// Pseudo-brand-name generator (2-3 syllables, deterministic per seed) - packaging text reads as an
+// actual (if fictional) product name instead of a repeating monogram letter.
+String[] pbSyl1 = {"Zo","Ka","Ne","Vi","Tro","Bri","Lu","Sa","Mo","Fi","Cor","Da","Ru","Ny","Ax","Pe","Qu","Or"};
+String[] pbSyl2 = {"lo","ra","tex","nix","va","mo","ce","dis","fy","ka","zo","lin","tra","xen","bo","sil","dor","ny"};
+String pseudoBrandName(int seed) {
+  int n1 = int(hashUnit(seed, 71) * pbSyl1.length) % pbSyl1.length;
+  int n2 = int(hashUnit(seed, 83) * pbSyl2.length) % pbSyl2.length;
+  String s = pbSyl1[n1] + pbSyl2[n2];
+  if (hashUnit(seed, 97) > 0.5) s += pbSyl2[int(hashUnit(seed, 101) * pbSyl2.length) % pbSyl2.length];
+  return s.toUpperCase();
+}
+
+// Edition 5 — Plastic Garden: half the leaves get a plastic-bag skin; flower centers become bottle
+// caps. Reset the curated-palette draw-order counters and the shared placement list here.
 void drawPlasticGarden(PGraphics pg) {
+  bagDrawCounter = 0;
+  capDrawCounter = 0;
+  plasticPlaced.clear();
   for (Plant p : plants) drawPlasticOverlay(pg, p);
   for (Plant p : bodyContourPlants) drawPlasticOverlay(pg, p);
   for (Plant p : contourPlants) drawPlasticOverlay(pg, p);
@@ -2546,25 +2679,28 @@ void drawPlasticGarden(PGraphics pg) {
 }
 
 void drawPlasticOverlay(PGraphics pg, Plant p) {
-  // Two-level gate: only ~1 in 4 plants catches any plastic at all, and only at some leaf joints —
-  // otherwise the sheer number of leaves in the scene turns the overlay into a solid blanket.
-  if (p.paletteSlot % 4 == 0) {
-    // Grocery-bag palette: translucent white, pink, blue, yellow, green, orange.
-    color[] bagCols = {
-      color(245, 248, 252), color(255, 165, 190), color(140, 195, 255),
-      color(255, 220, 110), color(150, 225, 165), color(245, 155, 90)
-    };
+  // Two-level gate - bags are a deliberate accent, not a blanket.
+  if (p.paletteSlot % 8 == 0) {
     for (Leaf lf : p.leaves) {
       if (lf.attachIndex >= p.path.size()) continue;
-      if ((lf.attachIndex + p.paletteSlot) % 6 != 0) continue;
+      if ((lf.attachIndex + p.paletteSlot) % 12 != 0) continue;
       PVector base = p.path.get(lf.attachIndex);
       float sway = swayOffset(p, lf.attachIndex, p.path.size());
-      float s = max(lf.size * p.sizeScale, 10) * 1.7; // bag height
-      color bc = bagCols[(lf.attachIndex + p.varietySeed) % bagCols.length];
+      if (tooCloseToPlastic(base.x + sway, base.y, 55)) continue;
+      int bagSeed = lf.attachIndex + p.varietySeed;
+      float sizeVar = curatedSizeMul[(bagDrawCounter * 5 + sketchSeed) % curatedSizeMul.length];
+      float widthVar = 0.72 + hashUnit(bagSeed, 227) * 0.66;
+      // Depth is the DOMINANT size driver, not a max()-against-natural-leaf-size floor - that would
+      // let a background bag on a large leaf render as big as a foreground one.
+      float depthT = constrain(base.y / (float) height, 0, 1);
+      float s = lerp(9, 52, depthT) * 1.7 * sizeVar; // bag height, depth-driven
+      color bc = jitterTone(curatedPlasticPalette[(bagDrawCounter * 17 + sketchSeed) % curatedPlasticPalette.length], bagSeed);
+      bagDrawCounter++;
+      int bagShape = bagSeed % 3; // three silhouettes - boxy, slouchy, narrow
       pg.pushMatrix();
       pg.translate(base.x + sway, base.y);
-      // an actual carrier bag snagged on the stem, dangling and swinging below its handles
       pg.rotate(sin(stillFrame * 0.03 + lf.angle * 3) * 0.18 + (lf.angle > 0 ? 0.12 : -0.12));
+      pg.scale(widthVar, 1);
       pg.noFill();
       pg.stroke(bc, 230);
       pg.strokeWeight(max(1, s * 0.07));
@@ -2572,30 +2708,53 @@ void drawPlasticOverlay(PGraphics pg, Plant p) {
       pg.arc(s * 0.13, 0, s * 0.2, s * 0.3, PI, TWO_PI);
       pg.noStroke();
       pg.fill(bc, 185);
-      pg.beginShape(); // body: slightly flaring, crumpled at the bottom
-      pg.vertex(-s * 0.26, 0);
-      pg.vertex(s * 0.26, 0);
-      pg.bezierVertex(s * 0.36, s * 0.35, s * 0.4, s * 0.7, s * 0.3, s * 0.92);
-      pg.bezierVertex(s * 0.1, s * 1.02, -s * 0.14, s * 0.96, -s * 0.32, s * 0.88);
-      pg.bezierVertex(-s * 0.4, s * 0.62, -s * 0.34, s * 0.3, -s * 0.26, 0);
+      pg.beginShape();
+      if (bagShape == 0) { // boxy - flatter sides, squared bottom
+        pg.vertex(-s * 0.28, 0); pg.vertex(s * 0.28, 0);
+        pg.bezierVertex(s * 0.3, s * 0.4, s * 0.3, s * 0.75, s * 0.24, s * 0.92);
+        pg.vertex(-s * 0.24, s * 0.92);
+        pg.bezierVertex(-s * 0.3, s * 0.75, -s * 0.3, s * 0.4, -s * 0.28, 0);
+      } else if (bagShape == 1) { // slouchy - wider flare, sagging bottom
+        pg.vertex(-s * 0.24, 0); pg.vertex(s * 0.24, 0);
+        pg.bezierVertex(s * 0.4, s * 0.4, s * 0.46, s * 0.75, s * 0.32, s * 1.0);
+        pg.bezierVertex(s * 0.05, s * 1.12, -s * 0.18, s * 1.02, -s * 0.36, s * 0.9);
+        pg.bezierVertex(-s * 0.46, s * 0.6, -s * 0.36, s * 0.3, -s * 0.24, 0);
+      } else { // narrow - a slim boutique-style bag
+        pg.vertex(-s * 0.18, 0); pg.vertex(s * 0.18, 0);
+        pg.bezierVertex(s * 0.24, s * 0.4, s * 0.22, s * 0.75, s * 0.16, s * 0.88);
+        pg.vertex(-s * 0.16, s * 0.88);
+        pg.bezierVertex(-s * 0.22, s * 0.75, -s * 0.24, s * 0.4, -s * 0.18, 0);
+      }
       pg.endShape(CLOSE);
       pg.stroke(255, 190); // crinkle highlights
       pg.strokeWeight(0.8);
       pg.line(-s * 0.08, s * 0.15, s * 0.04, s * 0.65);
       pg.line(s * 0.14, s * 0.2, s * 0.08, s * 0.55);
+      String brand = pseudoBrandName(bagSeed);
+      float labelW = s * max(0.34, brand.length() * 0.075);
+      pg.noStroke();
+      pg.fill(255, 235);
+      pg.rect(-labelW * 0.5, s * 0.35, labelW, s * 0.2, 2);
+      pg.fill(lerpColor(bc, color(30, 25, 20), 0.55));
+      pg.textFont(uiFont);
+      pg.textSize(min(s * 0.13, labelW * 0.85 / max(3, brand.length())));
+      pg.textAlign(CENTER, CENTER);
+      pg.text(brand, 0, s * 0.45);
       pg.popMatrix();
+      plasticPlaced.add(new PVector(base.x + sway, base.y));
     }
   }
   if (p.hasFlower && p.grown && motifGate(p)) {
-    // plastic screw-caps in mixed colors instead of blooms
-    color[] capCols = {
-      color(225, 60, 50), color(45, 120, 220), color(250, 200, 45),
-      color(60, 180, 95), color(245, 245, 245), color(250, 140, 40), color(150, 90, 210)
-    };
-    color cc = capCols[p.varietySeed % capCols.length];
     PVector tip = p.path.get(p.path.size() - 1);
     float sway = swayOffset(p, p.path.size() - 1, p.path.size());
-    float sz = visScale(p);
+    if (tooCloseToPlastic(tip.x + sway, tip.y, 50)) return;
+    // Cap palette offset shifted ~120 degrees of hue from the bags' sequence so a bag/cap pair on the
+    // same plant never lands on near-identical hues.
+    color cc = jitterTone(curatedPlasticPalette[(capDrawCounter * 17 + sketchSeed + 16) % curatedPlasticPalette.length], p.paletteSlot);
+    float capSizeVar = curatedSizeMul[(capDrawCounter * 5 + sketchSeed + 3) % curatedSizeMul.length];
+    float depthT = constrain(tip.y / (float) height, 0, 1);
+    float sz = lerp(9, 40, depthT) * capSizeVar;
+    capDrawCounter++;
     pg.pushMatrix();
     pg.translate(tip.x + sway, tip.y);
     pg.noStroke();
@@ -2617,7 +2776,16 @@ void drawPlasticOverlay(PGraphics pg, Plant p) {
     pg.stroke(lerpColor(cc, color(0), 0.15));
     pg.strokeWeight(sz * 0.03);
     pg.ellipse(0, 0, sz * 0.68, sz * 0.68);
+    pg.noStroke();
+    String capMark = pseudoBrandName(p.varietySeed);
+    capMark = capMark.substring(0, min(2, capMark.length()));
+    pg.fill(lerpColor(cc, color(255), 0.5));
+    pg.textFont(uiFont);
+    pg.textSize(sz * 0.22);
+    pg.textAlign(CENTER, CENTER);
+    pg.text(capMark, 0, sz * 0.02);
     pg.popMatrix();
+    plasticPlaced.add(new PVector(tip.x + sway, tip.y));
   }
 }
 
@@ -2646,7 +2814,7 @@ void keyPressed() {
     println(showBodyMaskDebug ? "Body mask debug overlay ON (translucent red = detected as figure)."
                               : "Body mask debug overlay OFF.");
   } else if (key == 's' || key == 'S') {
-    saveHighResJPEG();
+    saveHighResPrint();
   } else if (key == 'v' || key == 'V') {
     toggleRecording();
   } else if (key == 'q' || key == 'Q') {
@@ -2719,11 +2887,13 @@ void mousePressed() {
 
 // ---------------- Save / export ----------------
 
-void saveHighResJPEG() {
-  saveHighResJPEG(editionSlug(editionIndex));
+void saveHighResPrint() {
+  saveHighResPrint(editionSlug(editionIndex));
 }
 
-void saveHighResJPEG(String label) {
+// Lossless PNG (not JPEG) - a Giclee print deserves no compression artifacts. No build label/edition
+// text is ever drawn into this PGraphics - drawBuildLabel() is only called from the live draw() loop.
+void saveHighResPrint(String label) {
   PGraphics pg = createGraphics(width * printScale, height * printScale);
   pg.beginDraw();
   pg.scale(printScale);
@@ -2734,9 +2904,9 @@ void saveHighResJPEG(String label) {
   for (Plant p : depthSortedAllPlants()) p.display(pg);
   drawConsumerLayer(pg); // painted last so it always reads as the top layer, unobstructed
   pg.endDraw();
-  String filename = "output/plant_print_" + label + "_seed" + sketchSeed + "_" + timestamp() + ".jpg";
+  String filename = "output/plant_print_" + label + "_seed" + sketchSeed + "_" + timestamp() + ".png";
   pg.save(filename);
-  println("Saved high-res JPEG: " + filename + " (" + pg.width + "x" + pg.height + "px) [seed " + sketchSeed + "]");
+  println("Saved high-res PNG: " + filename + " (" + pg.width + "x" + pg.height + "px) [seed " + sketchSeed + "]");
 }
 
 String editionSlug(int idx) {
@@ -2749,7 +2919,7 @@ void exportAllEditions() {
   int savedEdition = editionIndex;
   for (int i = 0; i < editionNames.length; i++) {
     editionIndex = i;
-    saveHighResJPEG(editionSlug(i));
+    saveHighResPrint(editionSlug(i));
   }
   editionIndex = savedEdition;
   println("Exported all " + editionNames.length + " editions to output/.");
