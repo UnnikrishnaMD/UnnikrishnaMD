@@ -124,6 +124,8 @@ void setup() {
 
   uiFont = createFont("SansSerif.bold", 96, true);
   buildPalettes();
+  buildCuratedBarcodePalette();
+  buildCuratedAdPalette();
   buildAll();
 
   java.io.File outDir = new java.io.File(sketchPath("output"));
@@ -1904,27 +1906,45 @@ String colorModeName() {
 // element is drawn at least at a floor size (see visScale()) so it reads clearly at full-canvas
 // scale instead of disappearing at the same tiny size as the flower it's pinned to.
 
+// Checks a candidate ad-panel position against every panel already placed this build - the actual
+// mechanism behind "panels don't overlap/crowd each other."
+boolean tooCloseToPanels(float x, float y, float margin) {
+  for (PVector q : adPanels) if (dist(x, y, q.x, q.y) < margin) return true;
+  return false;
+}
+
 void buildConsumerLayer() {
   adPanels.clear();
   coinDrops.clear();
   // Hard caps keep each edition a deliberate accent over the ecosystem — without them, thousands of
   // vine roots would carpet the whole canvas in billboards/coins and bury the plants and the figure.
+  // Ad panels are landscape signage, not something that grows ON the figure - every source explicitly
+  // rejects a position that overlaps the VISIBLE body (tooCloseToBody, checked against the figure's
+  // actual on-screen placement) with a margin wide enough to cover a panel's own rendered width.
+  // Keeps every panel's full rendered box fully inside the canvas - positions used to run all the way
+  // to width/height with no allowance for the panel's own half-size, which clipped panels at the edge.
+  float panelMargin = 100;
   for (Plant p : contourPlants) { // Ad Canopy billboards sprout at sparse background vine roots
-    if (adPanels.size() >= 22) break;
-    if (random(1) < 0.02) adPanels.add(new PVector(p.path.get(0).x, p.path.get(0).y, random(1000)));
+    if (adPanels.size() >= 30) break;
+    if (random(1) < 0.025) {
+      float px = constrain(p.path.get(0).x, panelMargin, width - panelMargin);
+      float py = constrain(p.path.get(0).y, panelMargin, height - panelMargin);
+      if (!tooCloseToBody(px, py, 65) && !tooCloseToPanels(px, py, 100)) adPanels.add(new PVector(px, py, random(1000)));
+    }
   }
-  for (Plant p : bodyContourPlants) { // ...and a few more grow directly off the figure's silhouette
-    if (adPanels.size() >= 32) break;
-    if (random(1) < 0.03) adPanels.add(new PVector(p.path.get(0).x, p.path.get(0).y, random(1000)));
+  for (int i = 0; i < 28; i++) { // guaranteed baseline scatter, strictly off the figure, so the canopy always reads regardless of vine density
+    float px = random(panelMargin, width - panelMargin), py = random(panelMargin, height - panelMargin);
+    for (int tries = 0; tries < 20 && (tooCloseToBody(px, py, 65) || tooCloseToPanels(px, py, 100)); tries++) { px = random(panelMargin, width - panelMargin); py = random(panelMargin, height - panelMargin); }
+    if (!tooCloseToBody(px, py, 65)) adPanels.add(new PVector(px, py, random(1000))); // skip rather than ever falling back onto the body
   }
-  for (int i = 0; i < 20; i++) { // guaranteed baseline scatter so the canopy always reads, regardless of vine density
-    adPanels.add(new PVector(random(width), random(height), random(1000)));
-  }
+  // Capped hard at 12 total, matching mintFaces.length - Currency Bloom only has 12 distinct metal
+  // tones by design (each currency keeps ITS tone always, for identity), so more than 12 coins on
+  // screen makes a colour repeat mathematically unavoidable.
   for (Plant p : plants) { // Currency Bloom seeds a handful of drifting coins from portrait plants
-    if (coinDrops.size() >= 30) break;
+    if (coinDrops.size() >= 12) break;
     if (random(1) < 0.01) coinDrops.add(new PVector(p.path.get(0).x, random(-height, 0), random(1000)));
   }
-  for (int i = 0; i < 20; i++) { // guaranteed baseline coin rain so it's visible even on a sparse scene
+  for (int i = 0; i < 6 && coinDrops.size() < 12; i++) { // small guaranteed baseline, not a space-filling flood
     coinDrops.add(new PVector(random(width), random(-height, 0), random(1000)));
   }
 }
@@ -1964,19 +1984,55 @@ boolean motifGate(Plant p) {
 }
 
 // Edition 1 — Barcode Understory: every bloom doubles as a price tag, hung off the flower on a thread.
+// Edition 1 — Barcode Understory: every bloom doubles as a price tag, hung off the flower on a thread.
+// Reset the curated-palette draw-order counter here so tag paper colours cycle through a non-repeating
+// sequence across the whole edition (see curatedBarcodePalette).
 void drawBarcodeUnderstory(PGraphics pg) {
+  tagDrawCounter = 0;
   for (Plant p : plants) drawBarcodeTag(pg, p);
   for (Plant p : bodyContourPlants) drawBarcodeTag(pg, p);
   for (Plant p : contourPlants) drawBarcodeTag(pg, p);
   for (Plant p : fillerPlants) drawBarcodeTag(pg, p);
 }
 
+// Evenly-spaced hues (not golden-angle) so every ADJACENT entry in the array is already maximally far
+// apart - assigned via a draw-order counter stepped by roughly half the palette length, so tags drawn
+// one after another (which, following the plant lists' scan order, tend to be near each other on
+// screen too) land on close-to-opposite hues instead of just "different but still similar."
+color[] curatedBarcodePalette = new color[40];
+void buildCuratedBarcodePalette() {
+  for (int i = 0; i < curatedBarcodePalette.length; i++) {
+    float h = i / (float) curatedBarcodePalette.length;
+    int rgb = Color.HSBtoRGB(h, 0.6, 0.92);
+    curatedBarcodePalette[i] = color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  }
+}
+int tagDrawCounter = 0;
+
+// Every tag's paper hue comes from the curated, evenly-spaced palette above, stepped 19 slots per tag
+// - 19 and 40 are coprime and close to half the palette length, maximizing the hue jump between tags
+// drawn one after another. A light sepia blend keeps the mood without compressing the hue spread back
+// toward sameness (a full editionTint hue-pull would otherwise quietly undo this).
+color barcodePaperColor(Plant p) {
+  color src = curatedBarcodePalette[(tagDrawCounter * 19 + sketchSeed) % curatedBarcodePalette.length];
+  tagDrawCounter++;
+  float[] hsb = Color.RGBtoHSB((int) red(src), (int) green(src), (int) blue(src), null);
+  float paperSat = 0.28 + hashUnit(p.varietySeed, 5) * 0.55;
+  float paperBri = 0.62 + hashUnit(p.varietySeed, 7) * 0.32;
+  int rgb = Color.HSBtoRGB(hsb[0], paperSat, paperBri);
+  color paper = color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  return lerpColor(paper, color(235, 218, 190), 0.14);
+}
+
 void drawBarcodeTag(PGraphics pg, Plant p) {
   if (!(p.hasFlower && p.grown && motifGate(p))) return;
   PVector tip = p.path.get(p.path.size() - 1);
   float sway = swayOffset(p, p.path.size() - 1, p.path.size());
-  float sz = visScale(p);
+  // A UPC-style code needs real pixels to read as bars at all - a flat/small floor squeezes the code
+  // down to sub-pixel-wide bars that merge into a solid black patch instead of reading as bars.
+  float sz = depthVisScale(p, tip.y, 24, 56);
   float tagW = sz * 2.0, tagH = sz * 1.05;
+  color paper = barcodePaperColor(p);
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y + sz * 1.2);
   pg.rotate(sin(stillFrame * 0.02 + p.swayPhase) * 0.12); // tag sways like it's hanging off a thread
@@ -1984,26 +2040,79 @@ void drawBarcodeTag(PGraphics pg, Plant p) {
   pg.strokeWeight(1.4);
   pg.line(0, -sz * 1.2, 0, -tagH * 0.5);
   pg.rectMode(CENTER);
-  pg.fill(250, 248, 240, 255);
+  pg.noStroke(); // no outline - a real price tag's edge is just its paper, not a drawn border
+  pg.fill(paper);
   pg.rect(0, 0, tagW, tagH, 3);
-  pg.noFill();
-  pg.stroke(20, 20, 20, 255);
-  pg.strokeWeight(1.4);
-  pg.rect(0, 0, tagW, tagH, 3);
-  pg.noStroke();
-  pg.fill(10);
-  int bars = 9;
-  float bx = -tagW * 0.5 + tagW * 0.08;
-  for (int i = 0; i < bars; i++) {
-    float bw = (noise(p.paletteSlot * 0.01 + i) > 0.5) ? tagW * 0.05 : tagW * 0.025;
-    pg.rect(bx, -tagH * 0.06, bw, tagH * 0.6);
-    bx += bw + tagW * 0.03;
+
+  // Real UPC-style structure: thin, full-height GUARD bars (bar-space-bar) bookend the code and mark
+  // its center, exactly like a genuine barcode's quiet-zone markers - the rest of the modules are
+  // irregular-width bars/spaces driven by the plant's own varietySeed. 18 modules (not 36) - enough
+  // for a dozen tags to need twice that many pixels before they'd merge into an unreadable smear.
+  int modules = 18;
+  int mid = modules / 2;
+  float[] mw = new float[modules];
+  boolean[] isBar = new boolean[modules];
+  boolean[] isGuard = new boolean[modules];
+  float totalUnits = 0;
+  for (int i = 0; i < modules; i++) {
+    boolean guard = i < 3 || i >= modules - 3 || (i >= mid - 1 && i <= mid + 1);
+    isGuard[i] = guard;
+    if (guard) {
+      mw[i] = 1;
+      int gi = i < 3 ? i : (i >= modules - 3 ? i - (modules - 3) : i - (mid - 1));
+      isBar[i] = (gi % 2 == 0); // bar, space, bar
+    } else {
+      float n = noise(p.varietySeed * 0.02 + i * 0.73);
+      mw[i] = n < 0.4 ? 1 : (n < 0.75 ? 2 : 3);
+      isBar[i] = noise(p.varietySeed * 0.031 + i * 0.41 + 200) > 0.42; // irregular bar/space, not a fixed alternation
+    }
+    totalUnits += mw[i];
   }
-  pg.fill(10);
+  float codeW = tagW * 0.84;
+  float unitW = codeW / totalUnits;
+  float barTopData = -tagH * 0.32, barHData = tagH * 0.46;
+  float barTopGuard = -tagH * 0.38, barHGuard = tagH * 0.58; // guard bars run taller than data bars
+  float bx = -codeW * 0.5;
+  pg.noStroke();
+  pg.fill(20);
+  for (int i = 0; i < modules; i++) {
+    float w = mw[i] * unitW;
+    if (isBar[i]) {
+      if (isGuard[i]) pg.rect(bx, barTopGuard, max(1, w * 0.8), barHGuard);
+      else pg.rect(bx, barTopData, w, barHData);
+    }
+    bx += w;
+  }
+
+  // The number is a caption under the code, grouped like a real UPC digit string, and scales WITH the
+  // bars rather than a fixed-pixel floor.
+  pg.fill(20);
   pg.textFont(uiFont);
-  pg.textSize(max(tagH * 0.32, 11));
+  pg.textSize(constrain(tagH * 0.13, 3, tagH * 0.16));
   pg.textAlign(CENTER, CENTER);
-  pg.text(nf(p.varietySeed % 99999, 5), 0, tagH * 0.36);
+  int code = p.varietySeed % 1000000;
+  pg.text(nf(code / 1000, 3) + " " + nf(code % 1000, 3), 0, tagH * 0.36);
+  // ~1 in 4 tags gets a thin tendril creeping partially across it - ties the sticker back into the
+  // ecosystem instead of every tag sitting untouched on top.
+  if (hashUnit(p.varietySeed, 271) < 0.25) {
+    color tendril = stemColor(p);
+    pg.stroke(tendril, 200);
+    pg.strokeWeight(max(0.8, tagH * 0.035));
+    pg.noFill();
+    float side = hashUnit(p.varietySeed, 277) < 0.5 ? -1 : 1;
+    pg.bezier(side * tagW * 0.55, -tagH * 0.4, side * tagW * 0.1, -tagH * 0.05,
+              -side * tagW * 0.15, tagH * 0.15, -side * tagW * 0.4, tagH * 0.5);
+    pg.noStroke();
+    pg.fill(tendril, 210);
+    for (int li = 0; li < 2; li++) {
+      float lt = 0.3 + li * 0.35;
+      pg.pushMatrix();
+      pg.translate(lerp(side * tagW * 0.55, -side * tagW * 0.4, lt), lerp(-tagH * 0.4, tagH * 0.5, lt));
+      pg.rotate(hashUnit(p.varietySeed, 281 + li) * TWO_PI);
+      pg.ellipse(0, 0, tagH * 0.16, tagH * 0.08);
+      pg.popMatrix();
+    }
+  }
   pg.rectMode(CORNER);
   pg.popMatrix();
 }
@@ -2016,21 +2125,63 @@ void drawLogoBloom(PGraphics pg) {
   for (Plant p : fillerPlants) drawLogoBadge(pg, p);
 }
 
+// Dedicated vivid brand hue, hash-based across the full wheel (not a short fixed array) - every badge
+// reads as a bright trademark disc, and the wide sat/bri range keeps near-neighbors from landing on
+// near-identical tones.
+color logoBadgeColor(int seed) {
+  float h = hashUnit(seed, 31);
+  float s = 0.62 + hashUnit(seed, 37) * 0.36;
+  float b = 0.68 + hashUnit(seed, 41) * 0.3;
+  int rgb = Color.HSBtoRGB(h, s, b);
+  return color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// 5 bold, fully-filled abstract brand marks instead of a literal alphabet letter (which read as
+// "the badges are just labeled A-Z", not actual trademark iconography) - a swoosh/crescent, a
+// chevron, a ringed seal, a diamond, and ascending bars, hash-selected per badge.
+void drawLogoMark(PGraphics pg, float sz, int seed) {
+  int kind = int(hashUnit(seed, 53) * 5) % 5;
+  pg.fill(255);
+  if (kind == 0) { // swoosh / crescent
+    pg.beginShape();
+    pg.vertex(-sz * 0.55, sz * 0.25);
+    pg.bezierVertex(-sz * 0.1, -sz * 0.5, sz * 0.4, -sz * 0.55, sz * 0.6, -sz * 0.3);
+    pg.bezierVertex(sz * 0.3, -sz * 0.35, -sz * 0.05, -sz * 0.15, -sz * 0.3, sz * 0.35);
+    pg.endShape(CLOSE);
+  } else if (kind == 1) { // chevron
+    pg.beginShape();
+    pg.vertex(-sz * 0.5, sz * 0.4); pg.vertex(0, -sz * 0.45); pg.vertex(sz * 0.5, sz * 0.4);
+    pg.vertex(sz * 0.28, sz * 0.4); pg.vertex(0, -sz * 0.05); pg.vertex(-sz * 0.28, sz * 0.4);
+    pg.endShape(CLOSE);
+  } else if (kind == 2) { // ringed seal
+    pg.ellipse(0, 0, sz * 0.9, sz * 0.9);
+    pg.fill(logoBadgeColor(seed));
+    pg.ellipse(0, 0, sz * 0.5, sz * 0.5);
+  } else if (kind == 3) { // diamond
+    pg.beginShape();
+    pg.vertex(0, -sz * 0.55); pg.vertex(sz * 0.42, 0); pg.vertex(0, sz * 0.55); pg.vertex(-sz * 0.42, 0);
+    pg.endShape(CLOSE);
+  } else { // ascending bars
+    for (int i = 0; i < 3; i++) {
+      float bh = sz * (0.35 + i * 0.25);
+      pg.rect(-sz * 0.45 + i * sz * 0.42, sz * 0.4 - bh, sz * 0.26, bh);
+    }
+  }
+}
+
 void drawLogoBadge(PGraphics pg, Plant p) {
-  if (!(p.hasFlower && p.grown && motifGate(p))) return;
+  // Extra 1-in-3 density gate on top of motifGate - badges are a deliberate accent, not every bloom.
+  if (!(p.hasFlower && p.grown && motifGate(p) && p.varietySeed % 3 == 0)) return;
   PVector tip = p.path.get(p.path.size() - 1);
   float sway = swayOffset(p, p.path.size() - 1, p.path.size());
   float sz = visScale(p);
-  // Dedicated vivid brand palette — never sampled from the (sometimes dark) image, so every badge
-  // reads as a bright trademark disc with a bold white mark.
-  color[] badgeCols = {
-    color(226, 61, 84), color(243, 146, 55), color(250, 204, 40), color(60, 178, 115),
-    color(52, 140, 220), color(150, 90, 210), color(235, 90, 180), color(28, 178, 190)
-  };
-  color badge = badgeCols[p.varietySeed % badgeCols.length];
+  color badge = logoBadgeColor(p.varietySeed);
+  // Fixed per-badge hash-based tilt (stillFrame-driven, i.e. static since the scene is frozen) instead
+  // of a shared spin, so badges don't all sit at the same angle.
+  float tilt = hashUnit(p.varietySeed, 59) * TWO_PI;
   pg.pushMatrix();
   pg.translate(tip.x + sway, tip.y);
-  pg.rotate(stillFrame * 0.004 + p.swayPhase * 0.3); // slow corporate spin
+  pg.rotate(tilt + stillFrame * 0.004);
   pg.noStroke();
   pg.fill(badge);
   pg.ellipse(0, 0, sz * 1.8, sz * 1.8);
@@ -2038,16 +2189,17 @@ void drawLogoBadge(PGraphics pg, Plant p) {
   pg.stroke(255);
   pg.strokeWeight(sz * 0.09);
   pg.ellipse(0, 0, sz * 1.45, sz * 1.45);
+  // Seed-varied rim glint - a short bright arc at a per-badge angle, instead of a flat uniform ring,
+  // so the metallic-looking rim reads as catching light from a slightly different direction each time.
+  pg.stroke(lerpColor(badge, color(255), 0.7));
+  pg.strokeWeight(sz * 0.07);
+  float glintA = hashUnit(p.varietySeed, 61) * TWO_PI;
+  pg.arc(0, 0, sz * 1.45, sz * 1.45, glintA, glintA + PI * 0.35);
   pg.stroke(lerpColor(badge, color(255), 0.45));
   pg.strokeWeight(sz * 0.05);
   pg.ellipse(0, 0, sz * 1.95, sz * 1.95);
   pg.noStroke();
-  pg.fill(255);
-  pg.textFont(uiFont);
-  pg.textSize(sz * 0.85);
-  pg.textAlign(CENTER, CENTER);
-  char mark = (char) ('A' + (p.varietySeed % 26));
-  pg.text(mark, 0, sz * 0.04);
+  drawLogoMark(pg, sz * 0.95, p.varietySeed);
   pg.popMatrix();
 
   if (p.varietySeed % 12 == 0) { // roughly 1 in 12 blooms gets a sale burst
@@ -2073,76 +2225,155 @@ void drawLogoBadge(PGraphics pg, Plant p) {
   }
 }
 
-// Edition 3 — Ad Canopy: little roadside hoardings planted among the vines on wooden posts, leaning
-// slightly, with vines creeping over their top edges. Three rotating poster designs (QR flyer,
-// SALE poster, brand monogram) keep it varied but cohesive, and panel size follows the same
-// depth-of-field rule as the meadow: smaller and farther up the canvas, larger near the bottom.
+// Real digital-ad CTA vocabulary, grouped by intent - each panel `kind` pulls from whichever category
+// actually fits its content, rather than one flat word bank that could hand a discount poster a
+// signup phrase.
+String[] ctaShop = { "Shop Now", "Buy Now", "Get Yours", "Add to Cart", "Order Today", "Get It Now",
+                     "Claim Yours", "Grab Yours", "Buy 1 Get 1", "Shop the Sale", "Complete Purchase",
+                     "Check Out Now" };
+String[] ctaUrgency = { "Limited Time Only", "While Supplies Last", "Don't Miss Out", "Last Chance",
+                        "Ends Tonight", "Only 3 Left", "Only 5 Left", "Act Now", "Hurry, Ends Soon",
+                        "Almost Gone", "Sale Ends in 24 Hours" };
+String[] ctaLearn = { "Learn More", "Read More", "Discover How", "See How It Works", "Explore Now",
+                      "Find Out More", "See the Difference", "Get the Details", "Watch the Demo",
+                      "See for Yourself" };
+String[] ctaDiscount = { "Get 20% Off", "Save Big Today", "Unlock Your Discount", "Claim Your Free Gift",
+                         "Redeem Now", "Get the Deal", "Upgrade Now" };
+String[] ctaBrand = { "Join the Movement", "Be the First to Know", "Because You Deserve It",
+                      "Treat Yourself", "Live Better Today", "Own Your Story" };
+// Combined pool for the digital-screen panel kind, whose content spans signup and consideration intent.
+String[] ctaDigitalScreen = { "Sign Up Free", "Get Started", "Start Free Trial", "Join Now",
+                              "Try It Free", "Join the Waitlist", "Get Early Access", "See Options",
+                              "Take the Quiz", "Book a Call", "Request a Demo", "No Credit Card Required" };
+String[] ctaCountdown = { "Ends Tonight", "Only 3 Left", "Only 5 Left", "Act Now", "Hurry, Ends Soon",
+                          "Sale Ends in 24 Hours", "Last Chance", "Don't Miss Out" };
+
+// Picks the CTA vocabulary pool for a given panel `kind`.
+String[] poolForKind(int kind) {
+  switch (kind) {
+    case 0: return ctaLearn;            // hero-image card - discovery framing
+    case 1: return ctaUrgency;          // discount poster headline
+    case 2: return ctaBrand;            // brand monogram
+    case 3: return ctaDigitalScreen;    // glowing app-like CTA screen
+    case 4: return ctaShop;             // web banner
+    case 5: return ctaUrgency;          // starburst poster headline
+    case 6: return ctaBrand;            // star-rating strip
+    default: return ctaCountdown;       // countdown/urgency strip
+  }
+}
+
+// The ONLY source of panel text in this edition - no invented percentages, no hardcoded literals.
+// Prefers pool entries that fit within maxChars so text stays a legible size instead of shrinking a
+// long phrase to fit a small panel; falls back to the pool's own shortest entry if nothing qualifies.
+String pickCta(String[] pool, int seed, int maxChars) {
+  String shortest = pool[0];
+  for (String s : pool) if (s.length() < shortest.length()) shortest = s;
+  ArrayList<String> fits = new ArrayList<String>();
+  for (String s : pool) if (s.length() <= maxChars) fits.add(s);
+  if (fits.isEmpty()) return shortest;
+  return fits.get(int(hashUnit(seed, 293) * fits.size()) % fits.size());
+}
+
+// Hard floor under every CTA text size in this edition so nothing ever goes illegibly small.
+void adTextSize(PGraphics pg, float sz) { pg.textSize(max(9, sz)); }
+
+// A curated, designed palette instead of raw per-panel HSB math - hues spaced by the golden angle
+// (0.618034 turns), the standard technique for generating N colors maximally spread around the wheel
+// regardless of how many you pick, so consecutively-added colors are always maximally distinct from
+// each other (the whole reason to index this directly by panelIdx below, not through any extra
+// permutation that would undo that property). Bold/vivid-only sat/bri combos.
+color[] curatedAdPalette = new color[60];
+void buildCuratedAdPalette() {
+  float[][] svCombos = { {0.82, 0.88}, {0.68, 0.95}, {0.9, 0.7}, {0.55, 0.98} };
+  for (int i = 0; i < curatedAdPalette.length; i++) {
+    float h = (i * 0.618034) % 1.0;
+    float[] sv = svCombos[i % svCombos.length];
+    int rgb = Color.HSBtoRGB(h, sv[0], sv[1]);
+    curatedAdPalette[i] = color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  }
+}
+
+// Edition 3 — Ad Canopy: digital-style ad units (banner cards, CTA screens, discount posters) planted
+// among the vines on slim modern stands, with vines creeping over their top edges. Panel size follows
+// the same depth-of-field rule as the meadow: smaller and farther up the canvas, larger near the bottom.
 void drawAdCanopy(PGraphics pg) {
-  for (PVector ad : adPanels) {
+  for (int panelIdx = 0; panelIdx < adPanels.size(); panelIdx++) {
+    PVector ad = adPanels.get(panelIdx);
     float t = constrain(ad.y / (float) height, 0, 1); // depth: lower on canvas = closer = bigger
-    float panelW = lerp(38, 105, t) * (0.8 + noise(ad.z) * 0.4);
+    int adSeed = int(ad.z * 997);
+    float panelW = lerp(52, 118, t) * (0.85 + hashUnit(adSeed, 111) * 0.3);
     float panelH = panelW * 0.72; // landscape hoarding proportions
+    int maxChars = panelW > 95 ? 26 : (panelW > 70 ? 18 : 12);
     pg.pushMatrix();
     pg.translate(ad.x, ad.y);
-    pg.rotate((noise(ad.z + 9) - 0.5) * 0.16); // slight hand-planted lean
-    // wooden posts
-    pg.stroke(88, 62, 40);
-    pg.strokeWeight(max(2, panelW * 0.045));
-    pg.line(-panelW * 0.3, panelH * 0.4, -panelW * 0.3, panelH * 1.05);
-    pg.line(panelW * 0.3, panelH * 0.4, panelW * 0.3, panelH * 1.05);
+    pg.rotate((hashUnit(adSeed, 113) - 0.5) * 0.16); // slight hand-planted lean
+
+    // Indexed DIRECTLY by panelIdx (not through any extra permutation) so consecutive panels keep the
+    // palette's own maximal adjacent-hue separation; still guarantees no two panels share a color up
+    // to 60 panels.
+    color accent = curatedAdPalette[panelIdx % curatedAdPalette.length];
+
+    pg.stroke(200, 205, 212);
+    pg.strokeWeight(max(1.5, panelW * 0.025));
+    pg.line(0, panelH * 0.42, 0, panelH * 0.95);
     pg.rectMode(CENTER);
-    // Rotating designs, weighted toward the digital ones (screens and banners appear twice in the
-    // rotation): print flyers, discount posters, brand marks, glowing CTA screens, web banners.
-    int kind = int(ad.z * 3) % 8;
-    if (kind == 6) kind = 3;
-    if (kind == 7) kind = 4;
-    color[] accents = {
-      color(198, 40, 40), color(232, 120, 30), color(40, 110, 200), color(130, 50, 175), color(20, 150, 95),
-      color(20, 160, 175), color(235, 85, 165), color(245, 190, 30), color(90, 70, 205), color(240, 80, 60)
-    };
-    color accent = accents[int(ad.z * 13) % accents.length];
-    String[] ctas = { "BUY NOW", "SHOP", "CLICK", "TAP HERE", "SUBSCRIBE", "FREE",
-                      "DOWNLOAD", "JOIN NOW", "SWIPE UP", "ORDER NOW", "TRY FREE", "LIMITED" };
-    String cta = ctas[int(ad.z * 29) % ctas.length];
-    int pct = 10 + (int(ad.z * 7) % 8) * 10; // 10%..80%
+    boolean smallPanel = panelW < 68; // distant/small boards get one bold word instead of a full layout
+    int kind = int(ad.z * 3) % 8; // 8 genuinely distinct designs
+    String cta = pickCta(poolForKind(kind), adSeed, maxChars);
     boolean digital = (kind == 3 || kind == 4);
-    // frame + face (paper posters get a wooden frame; digital ones a dark bezel)
+    color frameCol = lerpColor(accent, color(0), 0.55);
+    color faceCol = digital ? lerpColor(accent, color(20, 20, 28), 0.5) : lerpColor(accent, color(255, 250, 240), 0.35);
     pg.noStroke();
-    pg.fill(digital ? color(30, 34, 40) : color(88, 62, 40));
+    pg.fill(frameCol);
     pg.rect(0, 0, panelW * 1.08, panelH * 1.14, 3);
-    pg.fill(digital ? color(16, 20, 26) : color(248, 244, 232));
+    pg.fill(faceCol);
     pg.rect(0, 0, panelW, panelH, 2);
-    pg.textFont(uiFont); // modern bold sans-serif for every ad
+    // "Ad" disclosure tag, top corner
+    color tagText = adTextColor(faceCol);
+    pg.fill(lerpColor(faceCol, tagText, 0.12));
+    pg.noStroke();
+    pg.rect(panelW * 0.5 - panelW * 0.15, -panelH * 0.5 + panelH * 0.1, panelW * 0.22, panelH * 0.14, 2);
+    pg.fill(tagText, 200);
+    pg.textFont(uiFont);
+    adTextSize(pg, panelH * 0.09);
     pg.textAlign(CENTER, CENTER);
-    if (kind == 0) { // QR flyer: code block on the left, faded text lines on the right
-      int grid = 5;
-      float q = panelH * 0.6;
-      float cell = q / grid;
-      pg.fill(25);
-      for (int gy = 0; gy < grid; gy++) {
-        for (int gx = 0; gx < grid; gx++) {
-          if (noise(ad.z + gx * 0.35, gy * 0.35) > 0.45) {
-            pg.rect(-panelW * 0.28 + gx * cell, -q * 0.5 + cell * 0.5 + gy * cell, cell * 0.85, cell * 0.85);
-          }
-        }
-      }
-      pg.fill(150);
-      for (int i = 0; i < 3; i++) {
-        pg.rect(panelW * 0.2, -panelH * 0.18 + i * panelH * 0.18, panelW * 0.42, panelH * 0.06, 2);
-      }
-    } else if (kind == 1) { // discount poster — amount and color vary per billboard
+    pg.text("Ad", panelW * 0.5 - panelW * 0.04, -panelH * 0.5 + panelH * 0.17);
+    pg.textAlign(CENTER, CENTER);
+    if (smallPanel) {
+      pg.fill(adTextColor(faceCol));
+      adTextSize(pg, min(panelH * 0.36, panelW * 0.88 / max(3, cta.length())));
+      pg.text(cta.toUpperCase(), 0, 0);
+    } else if (kind == 0) { // hero-image style digital ad card
+      color heroCol = lerpColor(accent, color(255), 0.15);
+      pg.fill(heroCol);
+      pg.rect(0, -panelH * 0.16, panelW * 0.86, panelH * 0.48, 3);
+      color heroMark = adTextColor(heroCol);
+      pg.fill(heroMark, 165);
+      pg.ellipse(-panelW * 0.16, -panelH * 0.28, panelH * 0.12, panelH * 0.12);
+      pg.triangle(-panelW * 0.32, -panelH * 0.06, panelW * 0.06, -panelH * 0.06, -panelW * 0.1, -panelH * 0.3);
+      pg.fill(adTextColor(faceCol));
+      adTextSize(pg, min(panelH * 0.15, panelW * 0.85 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, panelH * 0.18);
+      pg.fill(accent);
+      pg.rect(0, panelH * 0.36, panelW * 0.42, panelH * 0.14, panelH * 0.07);
+      pg.fill(adTextColor(accent));
+      String button = pickCta(ctaShop, adSeed + 1, maxChars);
+      adTextSize(pg, min(panelH * 0.08, panelW * 0.38 / max(4, button.length())));
+      pg.text(button.toUpperCase(), 0, panelH * 0.36);
+    } else if (kind == 1) { // discount poster
       pg.fill(accent);
       pg.rect(0, -panelH * 0.2, panelW * 0.88, panelH * 0.32);
-      pg.fill(255);
-      pg.textSize(panelH * 0.24);
-      pg.text("SALE", 0, -panelH * 0.21);
-      pg.fill(35);
-      pg.textSize(panelH * 0.3);
-      pg.text("-" + pct + "%", 0, panelH * 0.18);
+      pg.fill(adTextColor(accent));
+      adTextSize(pg, min(panelH * 0.24, panelW * 0.85 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, -panelH * 0.21);
+      pg.fill(adTextColor(faceCol));
+      String sub = pickCta(ctaDiscount, adSeed + 2, maxChars);
+      adTextSize(pg, min(panelH * 0.13, panelW * 0.8 / max(4, sub.length())));
+      pg.text(sub.toUpperCase(), 0, panelH * 0.18);
     } else if (kind == 2) { // brand monogram
-      pg.fill(35);
-      pg.textSize(panelH * 0.52);
-      pg.text((char) ('A' + (int(ad.z) % 26)), 0, -panelH * 0.05);
+      pg.fill(adTextColor(faceCol));
+      adTextSize(pg, min(panelH * 0.27, panelW * 0.85 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, -panelH * 0.05);
       pg.fill(accent);
       pg.rect(0, panelH * 0.28, panelW * 0.45, panelH * 0.06);
     } else if (kind == 3) { // digital screen: glowing call-to-action on a dark display
@@ -2153,13 +2384,13 @@ void drawAdCanopy(PGraphics pg) {
       pg.rect(0, 0, panelW * 0.92, panelH * 0.88, 2);
       pg.noStroke();
       pg.fill(glow);
-      pg.textSize(panelH * 0.2);
-      pg.text(cta, 0, -panelH * 0.12);
+      adTextSize(pg, min(panelH * 0.24, panelW * 0.88 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, -panelH * 0.12);
       pg.fill(lerpColor(glow, color(255), 0.5));
-      pg.textSize(panelH * 0.13);
+      adTextSize(pg, panelH * 0.13);
       pg.text(">>>", 0, panelH * 0.12);
-      pg.fill(90);
-      pg.rect(0, panelH * 0.32, panelW * 0.6, panelH * 0.05, 2); // dim url bar
+      pg.fill(lerpColor(accent, faceCol, 0.5));
+      pg.rect(0, panelH * 0.32, panelW * 0.6, panelH * 0.05, 2);
     } else if (kind == 4) { // web banner ad: bright gradient with a white CTA pill button
       pg.fill(accent);
       pg.rect(0, -panelH * 0.12, panelW * 0.92, panelH * 0.58, 2);
@@ -2168,12 +2399,9 @@ void drawAdCanopy(PGraphics pg) {
       pg.fill(255);
       pg.rect(0, panelH * 0.24, panelW * 0.55, panelH * 0.2, panelH * 0.1); // pill button
       pg.fill(40);
-      pg.textSize(panelH * 0.12);
-      pg.text(cta, 0, panelH * 0.23);
-      pg.fill(255, 200);
-      pg.textSize(panelH * 0.09);
-      pg.text("AD", panelW * 0.38, -panelH * 0.38);
-    } else { // NEW! burst poster
+      adTextSize(pg, min(panelH * 0.15, panelW * 0.5 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, panelH * 0.23);
+    } else if (kind == 5) { // starburst poster
       pg.fill(accent);
       float burstR = panelH * 0.34;
       pg.beginShape();
@@ -2184,11 +2412,30 @@ void drawAdCanopy(PGraphics pg) {
       }
       pg.endShape(CLOSE);
       pg.fill(255);
-      pg.textSize(panelH * 0.17);
-      pg.text("NEW!", 0, -panelH * 0.09);
+      String burstWord = pickCta(ctaUrgency, adSeed + 3, max(6, maxChars / 2));
+      adTextSize(pg, min(panelH * 0.15, burstR * 1.5 / max(4, burstWord.length())));
+      pg.text(burstWord.toUpperCase(), 0, -panelH * 0.09);
       pg.fill(60);
-      pg.textSize(panelH * 0.11);
-      pg.text(cta, 0, panelH * 0.3);
+      String subBrand = pickCta(ctaBrand, adSeed + 4, maxChars);
+      adTextSize(pg, min(panelH * 0.11, panelW * 0.85 / max(4, subBrand.length())));
+      pg.text(subBrand.toUpperCase(), 0, panelH * 0.3);
+    } else if (kind == 6) { // star-rating / testimonial strip
+      pg.fill(255, 205, 60);
+      adTextSize(pg, panelH * 0.16);
+      pg.text("★★★★★", 0, -panelH * 0.16);
+      pg.fill(lerpColor(faceCol, color(255), 0.7));
+      adTextSize(pg, min(panelH * 0.13, panelW * 0.88 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, panelH * 0.14);
+    } else { // kind == 7: countdown / urgency strip
+      pg.fill(accent);
+      pg.rect(0, -panelH * 0.02, panelW * 0.92, panelH * 0.46, 2);
+      pg.fill(255);
+      adTextSize(pg, min(panelH * 0.24, panelW * 0.88 / max(4, cta.length())));
+      pg.text(cta.toUpperCase(), 0, -panelH * 0.02);
+      pg.fill(60);
+      String sub2 = pickCta(ctaCountdown, adSeed + 5, maxChars);
+      adTextSize(pg, min(panelH * 0.11, panelW * 0.85 / max(4, sub2.length())));
+      pg.text(sub2.toUpperCase(), 0, panelH * 0.3);
     }
     // a vine creeps along the top edge, tying the ad back into the ecosystem
     pg.stroke(58, 98, 52);
@@ -2210,6 +2457,12 @@ void drawAdCanopy(PGraphics pg) {
     pg.rectMode(CORNER);
     pg.popMatrix();
   }
+}
+
+// Always-readable text/tag color for a given background - picks black or white by the background's
+// actual brightness rather than assuming a fixed color per design kind.
+color adTextColor(color bg) {
+  return brightness(bg) > 150 ? color(28, 22, 16) : color(255);
 }
 
 // Edition 4 — Currency Bloom: flower centers become embossed coins; loose coins drift down the scene.
