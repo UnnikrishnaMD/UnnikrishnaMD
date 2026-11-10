@@ -21,9 +21,10 @@
  * The drawing is studied before the type is laid over it. For every
  * form the sketch measures how much of the drawing's ink and colour
  * lies underneath it, and gives the whole form one flat tint, the way
- * a printer would specify a screen: solid black on plain paper, a
+ * a printer would specify a screen: solid blue on plain paper, a
  * strong tint where it crowds a line, a mid tint where a line passes
- * under it, a pale tint where the drawing is dense. Forms stay whole and sharp; the drawing always
+ * under it, a pale tint where the drawing is dense. The blue is laid over the drawing like a printing ink, so the
+ * black line is never covered. Forms stay whole and sharp; the drawing always
  * shows through them.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
@@ -48,12 +49,15 @@ final int     HOLD_FRAMES  = 90;
 final boolean RECORD       = true;
 final int     SEED         = 2026;
 
+// ---------- the forms: bright blue ----------
+final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
+
 // ---------- how the forms yield to the drawing ----------
 final float INK_MARGIN = 2.5;    // px around the drawing's ink that still counts as drawing
 final float NEAR_PX    = 16;     // px within which a form is crowding the drawing
-final float TINT_NEAR  = 0.6;    // opacity of a form that crowds the drawing without touching it
-final float TINT_TOUCH = 0.46;   // opacity of a form that only just touches the drawing
-final float TINT_DENSE = 0.15;   // opacity of a form lying on dense drawing
+final float TINT_NEAR  = 0.82;   // opacity of a form that crowds the drawing without touching it
+final float TINT_TOUCH = 0.66;   // opacity of a form that only just touches the drawing
+final float TINT_DENSE = 0.3;    // opacity of a form lying on dense drawing
 final float DENSE_AT   = 0.45;   // share of a form over ink at which it counts as dense
 
 // ---------- grid (units; the frame is 1932 wide) ----------
@@ -237,9 +241,11 @@ PGraphics compose(int sc) {
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
       if (fa > 0) {
         float k = fa * ((pg.pixels[i] >> 16) & 255) / 255.0;   // coverage x the form's tint
-        r += (11 - r) * k;
-        g += (11 - g) * k;
-        b += (11 - b) * k;
+        // the blue is printed over the drawing like an ink (multiply):
+        // paper turns blue, black line stays black, colour deepens
+        r *= 1 + (FORM_R / 255.0 - 1) * k;
+        g *= 1 + (FORM_G / 255.0 - 1) * k;
+        b *= 1 + (FORM_B / 255.0 - 1) * k;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
