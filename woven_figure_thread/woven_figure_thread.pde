@@ -18,14 +18,12 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * The drawing is studied before the type is laid over it. For every
- * form the sketch measures how much of the drawing's ink and colour
- * lies underneath it, and gives the whole form one flat tint, the way
- * a printer would specify a screen: solid blue on plain paper, a
- * strong tint where it crowds a line, a mid tint where a line passes
- * under it, a pale tint where the drawing is dense. The blue is laid over the drawing like a printing ink, so the
- * black line is never covered. Forms stay whole and sharp; the drawing always
- * shows through them.
+ * The forms are a translucent overlay whose opacity is decided pixel
+ * by pixel by what lies underneath. On plain paper the blue is solid.
+ * Where a form crosses a black line of the drawing it turns
+ * see-through, so the line shows as a deep blue; over the drawing's
+ * colours it sits in between. One form can therefore be solid in one
+ * part and transparent in another. Its outline stays sharp.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -53,12 +51,8 @@ final int     SEED         = 2026;
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
 
 // ---------- how the forms yield to the drawing ----------
-final float INK_MARGIN = 2.5;    // px around the drawing's ink that still counts as drawing
-final float NEAR_PX    = 16;     // px within which a form is crowding the drawing
-final float TINT_NEAR  = 0.82;   // opacity of a form that crowds the drawing without touching it
-final float TINT_TOUCH = 0.66;   // opacity of a form that only just touches the drawing
-final float TINT_DENSE = 0.3;    // opacity of a form lying on dense drawing
-final float DENSE_AT   = 0.45;   // share of a form over ink at which it counts as dense
+// opacity of the blue = 1 on plain paper, falling to ALPHA_ON_INK on solid black
+final float ALPHA_ON_INK = 0.34;
 
 // ---------- grid (units; the frame is 1932 wide) ----------
 final float GRID_W    = 1932;
@@ -96,7 +90,6 @@ final int   COTTON_TWIST = 0xFF7E0A0E;
 final int   COTTON_FUZZ  = 0xFFE8323A;
 
 PImage bg;
-float[] inkDist;                                  // the study of the drawing
 ArrayList<Word> words = new ArrayList<Word>();
 HashSet<String> used = new HashSet<String>();     // every form's signature
 ArrayList<PVector> anchors = new ArrayList<PVector>();
@@ -117,10 +110,8 @@ public void setup() {
 
   bg = loadImage("background.png");
   if (bg.width != OUT_W || bg.height != OUT_H) bg.resize(OUT_W, OUT_H);
-  studyBackground();
 
   setWords();
-  studyForms();
   buildPath();
 
   poster = compose(1);
@@ -155,53 +146,11 @@ public void draw() {
 }
 
 // =====================================================================
-//  STUDY OF THE DRAWING
+//  DRAWING + FORMS
 // =====================================================================
 
-// "Ink" is anything that is not plain paper: dark line or colour.
-// inkDist[i] = distance in pixels from pixel i to the nearest ink.
-void studyBackground() {
-  bg.loadPixels();
-  int w = bg.width, h = bg.height;
-  inkDist = new float[w * h];
-  for (int i = 0; i < w * h; i++) {
-    int c = bg.pixels[i];
-    float a = ((c >>> 24) & 255) / 255.0;
-    float m = min((c >> 16) & 255, (c >> 8) & 255, c & 255);
-    m = 255 + (m - 255) * a;                 // transparent counts as paper
-    inkDist[i] = (255 - m) > 64 ? 0 : 99999;
-  }
-  float d1 = 1, d2 = 1.4142;
-  for (int y = 0; y < h; y++) {              // chamfer distance, forward
-    for (int x = 0; x < w; x++) {
-      int i = y * w + x;
-      float d = inkDist[i];
-      if (x > 0) d = min(d, inkDist[i - 1] + d1);
-      if (y > 0) {
-        d = min(d, inkDist[i - w] + d1);
-        if (x > 0) d = min(d, inkDist[i - w - 1] + d2);
-        if (x < w - 1) d = min(d, inkDist[i - w + 1] + d2);
-      }
-      inkDist[i] = d;
-    }
-  }
-  for (int y = h - 1; y >= 0; y--) {         // and backward
-    for (int x = w - 1; x >= 0; x--) {
-      int i = y * w + x;
-      float d = inkDist[i];
-      if (x < w - 1) d = min(d, inkDist[i + 1] + d1);
-      if (y < h - 1) {
-        d = min(d, inkDist[i + w] + d1);
-        if (x < w - 1) d = min(d, inkDist[i + w + 1] + d2);
-        if (x > 0) d = min(d, inkDist[i + w - 1] + d2);
-      }
-      inkDist[i] = d;
-    }
-  }
-}
-
-// Drawing + forms at sc times the base size. The forms are first drawn
-// in a grey that encodes their tint, then merged with the drawing.
+// Drawing + forms at sc times the base size. For every pixel a form
+// covers, the drawing underneath sets how opaque the blue is there.
 PGraphics compose(int sc) {
   int w = OUT_W * sc, h = OUT_H * sc;
   PGraphics pg = createGraphics(w, h);
@@ -240,12 +189,12 @@ PGraphics compose(int sc) {
       int i = y * w + x;
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
       if (fa > 0) {
-        float k = fa * ((pg.pixels[i] >> 16) & 255) / 255.0;   // coverage x the form's tint
-        // the blue is printed over the drawing like an ink (multiply):
-        // paper turns blue, black line stays black, colour deepens
-        r *= 1 + (FORM_R / 255.0 - 1) * k;
-        g *= 1 + (FORM_G / 255.0 - 1) * k;
-        b *= 1 + (FORM_B / 255.0 - 1) * k;
+        // how much drawing is under this pixel: 0 = plain paper, 1 = solid black
+        float ink = 1 - min(r, g, b) / 255.0;
+        float k = fa * lerp(1, ALPHA_ON_INK, ink);
+        r += (FORM_R - r) * k;
+        g += (FORM_G - g) * k;
+        b += (FORM_B - b) * k;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
@@ -253,49 +202,6 @@ PGraphics compose(int sc) {
   pg.updatePixels();
   pg.endDraw();
   return pg;
-}
-
-// Gives every form its tint. The form is drawn alone into a small
-// buffer; the share of its own pixels that lie over the drawing decides
-// how far it steps back.
-void studyForms() {
-  float k = OUT_W / GRID_W;
-  for (Word wd : words) {
-    float[] sx = wd.mono ? MONO_X : BOLD_X;
-    for (int i = 0; i < wd.glyphs.length; i++) {
-      Glyph gl = wd.glyphs[i];
-      int pad = 12;
-      int gx = floor((wd.x + sx[i] * wd.s) * k) - pad, gy = floor(wd.y * k) - pad;
-      int bw = ceil(gl.w * wd.s * k) + 2 * pad, bh = ceil(CAP * wd.s * k) + 2 * pad;
-      PGraphics t = createGraphics(bw, bh);
-      t.beginDraw();
-      t.clear();
-      t.translate((wd.x + sx[i] * wd.s) * k - gx, wd.y * k - gy);
-      t.scale(k * wd.s);
-      gl.draw(t);
-      t.loadPixels();
-      int total = 0, over = 0, near = 0;
-      for (int y = 0; y < bh; y++) {
-        for (int x = 0; x < bw; x++) {
-          if (((t.pixels[y * bw + x] >>> 24) & 255) < 128) continue;
-          int px = gx + x, py = gy + y;
-          if (px < 0 || py < 0 || px >= OUT_W || py >= OUT_H) continue;
-          total++;
-          if (inkDist[py * OUT_W + px] < INK_MARGIN) over++;
-          if (inkDist[py * OUT_W + px] < NEAR_PX) near++;
-        }
-      }
-      t.endDraw();
-      float c = total > 0 ? over / (float) total : 0;
-      float nr = total > 0 ? near / (float) total : 0;
-      if (c < 0.004) gl.tint = (nr < 0.12) ? 1 : TINT_NEAR;
-      else {
-        float u = constrain(c / DENSE_AT, 0, 1);
-        u = u * u * (3 - 2 * u);
-        gl.tint = lerp(TINT_TOUCH, TINT_DENSE, u);
-      }
-    }
-  }
 }
 
 // =====================================================================
@@ -307,7 +213,6 @@ class Glyph {
   float w;
   boolean mono;
   String sig = "";
-  float tint = 1;              // 1 = solid; set by studyForms()
   Glyph(float w, boolean mono) { this.w = w; this.mono = mono; }
   void rect(float x, float y, float rw, float rh) { prims.add(new float[] { 0, x, y, rw, rh }); }
   void quad(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4) {
@@ -319,7 +224,7 @@ class Glyph {
   void draw(PGraphics g) {
     g.strokeCap(SQUARE);
     g.strokeWeight(mono ? MONO : BOLD);
-    int col = color(round(255 * tint));
+    int col = color(255);        // only coverage matters; colour is applied in compose()
     for (float[] p : prims) {
       int t = (int) p[0];
       if (t <= 1) { g.noStroke(); g.fill(col); } else { g.noFill(); g.stroke(col); }
