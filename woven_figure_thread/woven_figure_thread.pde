@@ -22,7 +22,9 @@
  * what lies underneath. On plain paper the blue is solid. Where a form
  * crosses a black line of the drawing, the crossing turns a pale,
  * light blue, so the overlap of type and line becomes a third shape of
- * its own, lighter than both. Over the drawing's colours the blue
+ * its own. That third shape is translucent, and by a different amount
+ * for every stroke of every form, chosen at random: some crossings are
+ * nearly opaque and pale, others let most of the black through. Over the drawing's colours the blue
  * turns translucent. Outlines stay sharp.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
@@ -52,6 +54,7 @@ final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
 
 // ---------- how the forms meet the drawing ----------
 final float CROSS_R = 178, CROSS_G = 208, CROSS_B = 255;   // blue crossing black: pale blue
+final float CROSS_MIN = 0.18, CROSS_MAX = 0.8;             // random opacity range of a crossing
 final float ALPHA_ON_COLOUR = 0.5;                         // opacity of the blue over full colour
 
 // ---------- grid (units; the frame is 1932 wide) ----------
@@ -92,6 +95,7 @@ final int   COTTON_FUZZ  = 0xFFE8323A;
 PImage bg;
 ArrayList<Word> words = new ArrayList<Word>();
 HashSet<String> used = new HashSet<String>();     // every form's signature
+java.util.Random dice = new java.util.Random(SEED);   // separate, so forms and thread stay as they were
 ArrayList<PVector> anchors = new ArrayList<PVector>();
 float[] tx, ty, cost, fuzzLen, fuzzAng;
 int nPts;
@@ -192,7 +196,8 @@ PGraphics compose(int sc) {
         float hi = max(r, g, b) / 255.0, lo = min(r, g, b) / 255.0;
         float black = 1 - hi;            // 1 on a black line, 0 on paper or pure colour
         float colour = hi - lo;          // 1 on a pure colour, 0 on paper or black
-        float k = fa * lerp(1, ALPHA_ON_COLOUR, colour);
+        float ca = lerp(CROSS_MIN, CROSS_MAX, ((pg.pixels[i] >> 16) & 255) / 255.0);   // this stroke's own crossing opacity
+        float k = fa * lerp(1, ALPHA_ON_COLOUR, colour) * lerp(1, ca, black);
         r += (lerp(FORM_R, CROSS_R, black) - r) * k;
         g += (lerp(FORM_G, CROSS_G, black) - g) * k;
         b += (lerp(FORM_B, CROSS_B, black) - b) * k;
@@ -211,23 +216,28 @@ PGraphics compose(int sc) {
 
 class Glyph {
   ArrayList<float[]> prims = new ArrayList<float[]>();
+  FloatList crossing = new FloatList();
   float w;
   boolean mono;
   String sig = "";
   Glyph(float w, boolean mono) { this.w = w; this.mono = mono; }
-  void rect(float x, float y, float rw, float rh) { prims.add(new float[] { 0, x, y, rw, rh }); }
+  void rect(float x, float y, float rw, float rh) { prims.add(new float[] { 0, x, y, rw, rh }); mark(); }
   void quad(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4) {
     prims.add(new float[] { 1, x1, y1, x2, y2, x3, y3, x4, y4 });
+    mark();
   }
-  void arc(float cx, float cy, float dw, float dh, float a0, float a1) { prims.add(new float[] { 2, cx, cy, dw, dh, a0, a1 }); }
-  void line(float x1, float y1, float x2, float y2) { prims.add(new float[] { 3, x1, y1, x2, y2 }); }
+  void arc(float cx, float cy, float dw, float dh, float a0, float a1) { prims.add(new float[] { 2, cx, cy, dw, dh, a0, a1 }); mark(); }
+  void line(float x1, float y1, float x2, float y2) { prims.add(new float[] { 3, x1, y1, x2, y2 }); mark(); }
+  // every stroke draws its own number: how opaque it is where it crosses black
+  void mark() { crossing.append(dice.nextFloat()); }
 
   void draw(PGraphics g) {
     g.strokeCap(SQUARE);
     g.strokeWeight(mono ? MONO : BOLD);
-    int col = color(255);        // only coverage matters; colour is applied in compose()
-    for (float[] p : prims) {
+    for (int n = 0; n < prims.size(); n++) {
+      float[] p = prims.get(n);
       int t = (int) p[0];
+      int col = color(round(255 * crossing.get(n)));   // carries the stroke's number to compose()
       if (t <= 1) { g.noStroke(); g.fill(col); } else { g.noFill(); g.stroke(col); }
       if (t == 0) g.rect(p[1], p[2], p[3], p[4]);
       else if (t == 1) g.quad(p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]);
