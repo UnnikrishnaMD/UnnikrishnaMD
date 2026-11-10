@@ -1,25 +1,32 @@
 /**
- * NO FORM TWICE — contour threads
+ * NO FORM TWICE — the figure grows
  * ------------------------------------------------------------------
  * Processing 4 (Java mode). A second version of woven_figure_thread.
- * The drawing and the blue forms are exactly as in that sketch. Only
- * the thread behaves differently.
+ * The drawing, the blue forms and the red cotton thread are exactly as
+ * in that sketch: the red thread still makes its one journey through
+ * every form.
  *
- * There the thread was one strand hopping from form to form. Here
- * there are many strands, and each one traces: it starts on the
- * outline of a blue form, lifts off it to a small distance, follows
- * the outline part of the way round, then peels away into a slow
- * current and ends in a curl. Only the blue forms are traced; the
- * drawing's own lines are not.
+ * What is new is a fourth layer. Fine coloured strands find the lines
+ * of the human figure in the drawing (body, face, hands, legs, the
+ * shorts, the moustache), lift off them, follow them part of the way
+ * round, then peel away into the open and curl. Leaves, buds, flowers
+ * and spiral fern tips grow along the strands, and butterflies,
+ * ladybirds and snails settle on them. None of the strands is red.
+ * The cloud above the head and the lettering below are not traced,
+ * and neither are the blue forms.
  *
- * Layers:
+ * Layers, bottom to top:
  *  1. data/background.png — the drawing.
- *  2. The type grid: two "words" per row, a heavy one of five forms
- *     and a monoline one of four, swapping sides on every row, with a
- *     line of small print. No form is used twice. Each is filled blue
- *     on plain paper and drawn as a light blue outline where it
- *     crosses the drawing or lies inside the figure.
- *  3. Bright red cotton strands tracing the contours of those forms.
+ *  2. The blue type grid, no form used twice: filled on plain paper,
+ *     light blue outline where it crosses the drawing or lies inside
+ *     the figure.
+ *  3. The figure's contour strands with their plants and creatures.
+ *  4. The red cotton thread.
+ *
+ * The figure's outlines are found in the drawing itself: its dark and
+ * coloured pixels inside the figure's zone are followed edge by edge
+ * into closed rings (see FIGURE ZONE, which is specific to this
+ * drawing).
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -38,7 +45,7 @@ final int     OUT_W = 1080, OUT_H = 1920;
 final int     HIRES_SCALE  = 3;
 final int     FPS          = 30;
 final int     INTRO_FRAMES = 45;    // drawing and forms alone
-final int     GROW_FRAMES  = 900;   // 30 s for every strand to finish
+final int     GROW_FRAMES  = 900;   // 30 s of searching
 final int     HOLD_FRAMES  = 90;
 final boolean RECORD       = true;
 final int     SEED         = 2026;
@@ -77,7 +84,8 @@ final float[] MONO_SW = { 175, 181, 161, 153 };
 
 
 // ---------- thread ----------
-final float TW      = 4.2;      // strand thickness
+final float TW      = 7;
+final float STEP    = 2.5;
 final int   CHUNK   = 12;
 final int   OVERLAP = 10;
 final int   COTTON_EDGE  = 0xFFA30F12;
@@ -86,32 +94,60 @@ final int   COTTON_LIGHT = 0xFFFF6A5E;
 final int   COTTON_TWIST = 0xFF7E0A0E;
 final int   COTTON_FUZZ  = 0xFFE8323A;
 
-// ---------- contours (grid units) ----------
-final float CONTOUR_SPACING    = 4;    // distance between points along an outline
-final float CONTOUR_MIN_LENGTH = 60;   // shorter outlines are ignored
+// ---------- FIGURE ZONE (pixels of the 1080 x 1920 drawing) ----------
+// Where the human figure is. Above FIG_TOP is the cloud; the three
+// boxes take out the cloud's tails that hang down beside the hands.
+final float FIG_TOP = 598;
+final float[][] FIG_NOT = { { 0, 0, 238, 740 }, { 792, 0, 1080, 712 }, { 626, 640, 692, 772 } };
 
-// ---------- tracing ----------
-// Each strand starts on an outline, lifts off it to a small distance,
-// follows it part of the way round, then peels away and curls.
-final int   THREAD_COUNT = 330;        // every outline gets one strand; any left over go to the longer outlines
-final float OFFSET_MIN = 4, OFFSET_MAX = 13;   // distance kept from the outline
-final float WOBBLE = 3;                // how much that distance breathes
-final float LIFT = 24;                 // points over which a strand rises off the outline
-final float WRAP_MIN = 0.35, WRAP_MAX = 0.95;  // share of the outline it travels round
-final int   MAX_WRAP = 900;
-final int   PEEL_MIN = 14, PEEL_MAX = 64;      // steps after leaving the outline
-final float STEP_LEN = 3.6, FLOW_SCALE = 0.0035, FLOW_TURN = 0.16, CURL = 0.34;
+// ---------- CONTOURS ----------
+final float CONTOUR_MIN_LENGTH = 90;   // px; shorter outlines (flecks) are ignored
+final float CONTOUR_SPACING = 3;       // px between points along an outline
+
+// ---------- CONTOUR STRANDS ----------
+// Each strand starts on an outline of the figure, lifts off it to a
+// small distance, follows it part of the way round, then peels away
+// into a noise current and ends in a curl.
+final int   STRAND_COUNT = 400;
+final float OFFSET_MIN = 4, OFFSET_MAX = 20;   // distance kept from the outline (px)
+final float WOBBLE = 5;                        // how much that distance breathes
+final float LIFT = 24;                         // points over which a strand rises off the outline
+final float WRAP_MIN = 0.10, WRAP_MAX = 0.50;  // share of the outline it travels round
+final int   MAX_WRAP = 700;
+final int   PEEL_MIN = 30, PEEL_MAX = 150;     // steps after leaving the outline
+final float STEP_LEN = 2.2, FLOW_SCALE = 0.006, FLOW_TURN = 0.16, CURL = 0.22;
 final int   SMOOTH = 3;
-final float STAGGER = 0.65;            // strands start somewhere in the first 65% of the growth
+final float STRAND_W_MIN = 0.7, STRAND_W_MAX = 2.4;
+final float STRAND_A_MIN = 225, STRAND_A_MAX = 255;
+final float STAGGER = 0.65;                    // strands start somewhere in the first 65% of the growth
+final String[] STRAND_COLORS = { "#1f8a4c", "#5aa33a", "#0f6b5c", "#e3a008", "#f20587", "#7a3fb5", "#f28c28", "#2f5a5a" };
+
+// ---------- FLORA ----------
+final float LEAF_CHANCE = 0.009, LEAF_MIN = 5, LEAF_MAX = 15;
+final float BUD_CHANCE = 0.0025, FLOWER_CHANCE = 0.0025, FLOWER_MIN = 4, FLOWER_MAX = 11;
+final float FERN_TIP_CHANCE = 0.3;
+final String[] LEAF_COLORS   = { "#5f8f4f", "#7fa65a", "#3f6f4a", "#a6b86a", "#2f5a5a", "#8a9a5b" };
+final String[] FLOWER_COLORS = { "#f20587", "#f1eee2", "#da8e04", "#d4b6cf", "#ffd35a", "#7a3fb5", "#f28c28" };
+final int   BLOOM_FRAMES = 24;                 // frames a leaf or flower takes to open
+
+// ---------- FAUNA ----------
+final int   BUTTERFLIES = 8, LADYBIRDS = 10, SNAILS = 4;
+final float BUTTERFLY_MIN = 9, BUTTERFLY_MAX = 18, LADYBIRD_MIN = 4, LADYBIRD_MAX = 7, SNAIL_MIN = 7, SNAIL_MAX = 12;
+final float FLUTTER = 0.22;
+final String[] BUTTERFLY_COLORS = { "#f20587", "#da8e04", "#7a3fb5", "#f28c28", "#3e2f74", "#f1eee2" };
 
 PImage bg;
 float[] outside;                                  // 1 = paper outside the figure, 0 = inside it
 ArrayList<Word> words = new ArrayList<Word>();
 HashSet<String> used = new HashSet<String>();     // every form's signature
 ArrayList<PVector> anchors = new ArrayList<PVector>();
-ArrayList<Ring> rings = new ArrayList<Ring>();
+float[] tx, ty, cost, fuzzLen, fuzzAng;
+int nPts;
+int shown = 0;
+PGraphics poster, threadLayer, strandLayer;
+ArrayList<Ring> figureRings = new ArrayList<Ring>();
 ArrayList<Strand> strands = new ArrayList<Strand>();
-PGraphics poster, threadLayer;
+ArrayList<Creature> creatures = new ArrayList<Creature>();
 
 public void settings() {
   size(OUT_W, OUT_H);
@@ -128,10 +164,18 @@ public void setup() {
   studyBackground();
 
   setWords();
-  traceForms();
-  buildThreads();
+  buildPath();
+  println("thread passes over " + formsTouched() + " of " + used.size() + " forms");
+
+  traceFigure();
+  buildStrands();
 
   poster = compose(1);
+
+  strandLayer = createGraphics(width, height);
+  strandLayer.beginDraw();
+  strandLayer.clear();
+  strandLayer.endDraw();
 
   threadLayer = createGraphics(width, height);
   threadLayer.beginDraw();
@@ -141,16 +185,25 @@ public void setup() {
 
 public void draw() {
   int f = frameCount - 1;
-  threadLayer.beginDraw();
-  for (Strand st : strands) {
-    int target = revealAt(st, f - INTRO_FRAMES);
-    if (target > st.drawn) {
-      drawStrand(threadLayer, st, st.drawn, target);
-      st.drawn = target;
-    }
+  float p = constrain((f - INTRO_FRAMES) / (float) GROW_FRAMES, 0, 1);
+  int target = sampleAtCost(p * cost[nPts - 1]);
+  if (target > shown) {
+    threadLayer.beginDraw();
+    drawThread(threadLayer, shown, target);
+    threadLayer.endDraw();
+    shown = target;
   }
-  threadLayer.endDraw();
   image(poster, 0, 0);
+
+  // the figure's strands and what grows on them, under the red thread
+  float tt = f - INTRO_FRAMES;
+  strandLayer.beginDraw();
+  growStep(strandLayer, tt);
+  strandLayer.endDraw();
+  image(strandLayer, 0, 0);
+  drawLiveFlora(g, tt);
+  drawCreatures(g, tt, true);
+
   image(threadLayer, 0, 0);
 
   if (RECORD) saveFrame("frames/reel-####.png");
@@ -457,6 +510,26 @@ PVector onForm(Glyph gl, float lx, float ly) {
   return best != null ? best : new PVector(lx, ly);
 }
 
+// How many forms the thread actually passes over.
+int formsTouched() {
+  int touched = 0;
+  for (Word wd : words) {
+    float[] sx = wd.mono ? MONO_X : BOLD_X;
+    for (int i = 0; i < wd.glyphs.length; i++) {
+      java.awt.geom.Area a = wd.glyphs[i].shape();
+      float ox = wd.x + sx[i] * wd.s, hw = TW / 2 / wd.s;
+      boolean hit = false;
+      for (int k = 0; k < nPts && !hit; k++) {
+        float lx = (tx[k] - ox) / wd.s, ly = (ty[k] - wd.y) / wd.s;
+        if (lx < -hw || ly < -hw || lx > wd.glyphs[i].w + hw || ly > CAP + hw) continue;
+        hit = a.intersects(lx - hw, ly - hw, 2 * hw, 2 * hw);
+      }
+      if (hit) touched++;
+    }
+  }
+  return touched;
+}
+
 // ---------------------------------------------------------------------
 //  Heavy forms. Rules that keep them from becoming letters:
 //  no stem runs the full height; a stem may only grow out of the middle
@@ -738,180 +811,133 @@ Glyph genMono(float w) {
 }
 
 // =====================================================================
-//  CONTOURS — the outlines of the blue forms, as rings of points
+//  THREAD — where it goes
 // =====================================================================
 
-class Ring {
-  float[][] pts, nrm;      // even points round the outline; normal pointing away from the form
-  float scale;             // 1 for the big forms, smaller for the small print
-  float weight;
-}
-
-// Walks the outline of every form and stores each closed ring.
-void traceForms() {
-  int forms = 0, traced = 0;
-  for (Word wd : words) {
-    float[] sx = wd.mono ? MONO_X : BOLD_X;
-    for (int i = 0; i < wd.glyphs.length; i++) {
-      java.awt.geom.Area a = wd.glyphs[i].shape();
-      float ox = wd.x + sx[i] * wd.s, oy = wd.y;
-      java.awt.geom.PathIterator it = new java.awt.geom.FlatteningPathIterator(a.getPathIterator(null), 0.5);
-      float[] c = new float[6];
-      ArrayList<float[]> cur = new ArrayList<float[]>();
-      boolean any = false;
-      while (!it.isDone()) {
-        int type = it.currentSegment(c);
-        if (type == java.awt.geom.PathIterator.SEG_MOVETO) cur = new ArrayList<float[]>();
-        if (type != java.awt.geom.PathIterator.SEG_CLOSE) cur.add(new float[] { ox + c[0] * wd.s, oy + c[1] * wd.s });
-        else {
-          Ring r = resample(cur, a, ox, oy, wd.s);
-          if (r != null) { rings.add(r); any = true; }
-        }
-        it.next();
-      }
-      forms++;
-      if (any) traced++;
+int pickNext(ArrayList<PVector> todo, PVector c) {
+  int[] best = { -1, -1, -1 };
+  for (int k = 0; k < 3; k++) {
+    float bd = 99999999;
+    for (int i = 0; i < todo.size(); i++) {
+      if (i == best[0] || i == best[1]) continue;
+      float d = dist(c.x, c.y, todo.get(i).x, todo.get(i).y);
+      if (d < bd) { bd = d; best[k] = i; }
     }
   }
-  println("outlines traced on " + traced + " of " + forms + " forms (" + rings.size() + " rings)");
+  float roll = random(1);
+  int k = (roll < 0.62) ? 0 : (roll < 0.9) ? 1 : 2;
+  while (best[k] < 0) k--;
+  return best[k];
 }
 
-// even points round a closed ring, each with the normal that points away
-// from the form (tested against the form itself, so holes work too)
-Ring resample(ArrayList<float[]> ring, java.awt.geom.Area a, float ox, float oy, float s) {
-  ArrayList<float[]> out = new ArrayList<float[]>();
-  float carry = 0;
-  float spacing = CONTOUR_SPACING * max(s, 0.5);
-  for (int i = 0; i < ring.size(); i++) {
-    float[] p = ring.get(i), q = ring.get((i + 1) % ring.size());
-    float len = dist(p[0], p[1], q[0], q[1]);
-    float d = carry;
-    while (d < len) {
-      float u = d / len;
-      out.add(new float[] { p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u });
-      d += spacing;
+void buildPath() {
+  ArrayList<PVector> todo = new ArrayList<PVector>(anchors);
+  ArrayList<PVector> cp = new ArrayList<PVector>();   // z = 1 while looping
+  PVector cur = new PVector(-110, random(300, 900));
+  cp.add(new PVector(cur.x - 80, cur.y - 50, 0));
+  cp.add(cur.copy());
+
+  while (todo.size() > 0) {
+    PVector a = todo.remove(pickNext(todo, cur));
+    addHop(cp, cur, a);
+
+    // the loop of wanting: circle the thing, tightening as it goes,
+    // and come to rest on it. Small print gets a small loop.
+    float a0 = atan2(cur.y - a.y, cur.x - a.x);
+    float dir = random(1) < 0.5 ? 1 : -1;
+    float turns = random(0.9, 2.1);
+    float r0 = random(20, 54) * a.z;
+    int steps = ceil(turns * 8);
+    for (int k = 0; k <= steps; k++) {
+      float u = k / (float) steps;
+      float ang = a0 + dir * TWO_PI * turns * u;
+      float m = (1 - 0.4 * u) * (1 + random(-0.14, 0.14));
+      cp.add(new PVector(a.x + r0 * m * cos(ang), a.y + r0 * 0.85 * m * sin(ang), 1));
     }
-    carry = d - len;
+    cp.add(new PVector(a.x, a.y, 1));              // the thread lands on the form
+    cur = cp.get(cp.size() - 1).copy();
+    cur.z = 0;
   }
-  int n = out.size();
-  if (n < 8 || n * spacing < CONTOUR_MIN_LENGTH * s) return null;
-  Ring r = new Ring();
-  r.scale = (s == 1) ? 1 : 0.3;
-  r.pts = out.toArray(new float[n][]);
-  r.nrm = new float[n][2];
-  int inside = 0;
-  for (int k = 0; k < n; k++) {
-    float[] p = r.pts[(k - 2 + n) % n], q = r.pts[(k + 2) % n];
-    float dx = q[0] - p[0], dy = q[1] - p[1];
-    float l = sqrt(dx * dx + dy * dy);
-    if (l == 0) l = 1;
-    r.nrm[k][0] = dy / l;
-    r.nrm[k][1] = -dx / l;
-    float tx = r.pts[k][0] + r.nrm[k][0] * 3 * s, ty = r.pts[k][1] + r.nrm[k][1] * 3 * s;
-    if (a.contains((tx - ox) / s, (ty - oy) / s)) inside++;
+
+  // the way out: the nearest edge of the frame
+  float dl = cur.x, dr = GRID_W - cur.x, dt = cur.y, db = GRID_H - cur.y;
+  float m = min(min(dl, dr), min(dt, db));
+  PVector out = cur.copy();
+  if (m == dl) out.x = -130;
+  else if (m == dr) out.x = GRID_W + 130;
+  else if (m == dt) out.y = -130;
+  else out.y = GRID_H + 130;
+  addHop(cp, cur, out);
+  cp.add(out);
+  cp.add(new PVector(out.x + (out.x - cur.x) * 0.2, out.y + (out.y - cur.y) * 0.2, 0));
+
+  // Catmull-Rom through the control points, sampled every STEP units
+  FloatList xs = new FloatList();
+  FloatList ys = new FloatList();
+  FloatList cs = new FloatList();
+  for (int i = 1; i < cp.size() - 2; i++) {
+    PVector p0 = cp.get(i - 1), p1 = cp.get(i), p2 = cp.get(i + 1), p3 = cp.get(i + 2);
+    int n = max(2, ceil(dist(p1.x, p1.y, p2.x, p2.y) * 1.15 / STEP));
+    float c = (p1.z > 0 && p2.z > 0) ? 2.2 : 1;   // it lingers while it loops
+    for (int k = 0; k < n; k++) {
+      float t = k / (float) n;
+      xs.append(curvePoint(p0.x, p1.x, p2.x, p3.x, t));
+      ys.append(curvePoint(p0.y, p1.y, p2.y, p3.y, t));
+      cs.append(c);
+    }
   }
-  if (inside > n / 2) for (int k = 0; k < n; k++) { r.nrm[k][0] = -r.nrm[k][0]; r.nrm[k][1] = -r.nrm[k][1]; }
-  r.weight = pow(n, 0.8);
-  return r;
+
+  nPts = xs.size();
+  tx = new float[nPts];
+  ty = new float[nPts];
+  cost = new float[nPts];
+  fuzzLen = new float[nPts];
+  fuzzAng = new float[nPts];
+  float acc = 0;
+  for (int i = 0; i < nPts; i++) {
+    // a soft thread never lies perfectly straight
+    tx[i] = xs.get(i) + (noise(i * 0.012, 3.1) - 0.5) * 10;
+    ty[i] = ys.get(i) + (noise(i * 0.012, 9.7) - 0.5) * 10;
+    acc += cs.get(i);
+    cost[i] = acc;
+    fuzzLen[i] = random(1) < 0.32 ? random(4, 15) * (random(1) < 0.5 ? 1 : -1) : 0;
+    fuzzAng[i] = random(-0.9, 0.9);
+  }
+}
+
+// slack between two points: a few wandering control points across the hop
+void addHop(ArrayList<PVector> cp, PVector from, PVector to) {
+  float d = dist(from.x, from.y, to.x, to.y);
+  if (d < 1) return;
+  int nMid = floor(d / 240);
+  float nx = -(to.y - from.y) / d, ny = (to.x - from.x) / d;
+  for (int j = 1; j <= nMid; j++) {
+    float t = j / (nMid + 1.0);
+    float off = randomGaussian() * min(d * 0.14, 60);
+    cp.add(new PVector(lerp(from.x, to.x, t) + nx * off, lerp(from.y, to.y, t) + ny * off, 0));
+  }
+}
+
+int sampleAtCost(float c) {
+  int i = shown;
+  while (i < nPts - 1 && cost[i] < c) i++;
+  return i;
 }
 
 // =====================================================================
-//  CONTOUR THREADS — where they go
+//  THREAD — what it looks like
 // =====================================================================
 
-class Strand {
-  float[] x, y, fuzzLen, fuzzAng;
-  float start, dur;        // frame it starts on, frames it takes
-  int drawn;
-}
-
-void buildThreads() {
-  randomSeed(SEED + 6);
-  noiseSeed(SEED + 6);
-  float total = 0;
-  for (Ring r : rings) total += r.weight;
-  for (Ring r : rings) strands.add(makeStrand(r));           // every outline is traced at least once
-  while (strands.size() < THREAD_COUNT) {                    // the rest go to the longer outlines
-    float pk = random(total);
-    Ring ring = rings.get(0);
-    for (Ring r : rings) { pk -= r.weight; if (pk < 0) { ring = r; break; } }
-    strands.add(makeStrand(ring));
-  }
-}
-
-Strand makeStrand(Ring ring) {
-  int n = ring.pts.length;
-  int start = floor(random(n));
-  int dir = random(1) < 0.5 ? 1 : -1;
-  int steps = min(MAX_WRAP, floor(n * random(WRAP_MIN, WRAP_MAX)));
-  float off = random(OFFSET_MIN, OFFSET_MAX) * ring.scale;
-  float nz = random(1000);
-  ArrayList<float[]> pts = new ArrayList<float[]>();
-
-  // follow the outline at a breathing distance, rising off it at the start
-  for (int k = 0; k < steps; k++) {
-    int idx = ((start + dir * k) % n + n) % n;
-    float lift = min(1, k / LIFT);
-    float o = max(1, (off + (noise(k * 0.02, nz) - 0.5) * 2 * WOBBLE * ring.scale) * lift);
-    pts.add(new float[] { ring.pts[idx][0] + ring.nrm[idx][0] * o, ring.pts[idx][1] + ring.nrm[idx][1] * o });
-  }
-  if (pts.size() < 2) { pts.clear(); pts.add(ring.pts[start].clone()); pts.add(ring.pts[(start + 1) % n].clone()); }
-
-  // peel away into the current and end in a tightening curl
-  float[] last = pts.get(pts.size() - 1), prev = pts.get(pts.size() - 2);
-  float x = last[0], y = last[1], a = atan2(last[1] - prev[1], last[0] - prev[0]);
-  int peel = floor(random(PEEL_MIN, PEEL_MAX) * (ring.scale < 1 ? 0.4 : 1));
-  float curlDir = random(1) < 0.5 ? -1 : 1;
-  int curlFrom = floor(peel * random(0.55, 0.8));
-  for (int j = 0; j < peel; j++) {
-    a += (noise(x * FLOW_SCALE, y * FLOW_SCALE, nz) - 0.5) * 2 * FLOW_TURN;
-    if (j > curlFrom) { float u = (j - curlFrom) / (float) (peel - curlFrom); a += curlDir * u * u * CURL; }
-    x += cos(a) * STEP_LEN;
-    y += sin(a) * STEP_LEN;
-    pts.add(new float[] { x, y });
-  }
-
-  // soften the corners inherited from the outline
-  Strand st = new Strand();
-  int m = pts.size();
-  st.x = new float[m];
-  st.y = new float[m];
-  st.fuzzLen = new float[m];
-  st.fuzzAng = new float[m];
-  for (int k = 0; k < m; k++) {
-    float sx = 0, sy = 0;
-    int c = 0;
-    for (int q = max(0, k - SMOOTH); q <= min(m - 1, k + SMOOTH); q++) { sx += pts.get(q)[0]; sy += pts.get(q)[1]; c++; }
-    st.x[k] = sx / c;
-    st.y[k] = sy / c;
-    st.fuzzLen[k] = random(1) < 0.22 ? random(3, 9) * (random(1) < 0.5 ? 1 : -1) : 0;
-    st.fuzzAng[k] = random(-0.9, 0.9);
-  }
-  st.start = random(GROW_FRAMES * STAGGER);
-  st.dur = max(30, GROW_FRAMES - st.start);
-  return st;
-}
-
-// index of the last point a strand has reached on a given growth frame
-int revealAt(Strand st, float frame) {
-  float u = constrain((frame - st.start) / st.dur, 0, 1);
-  return floor(u * (st.x.length - 1));
-}
-
-// =====================================================================
-//  CONTOUR THREADS — what they look like
-// =====================================================================
-
-void poly(PGraphics g, Strand st, int a, int b, float ox, float oy) {
+void poly(PGraphics g, int a, int b, float ox, float oy) {
   g.beginShape();
-  for (int i = a; i <= b; i++) g.vertex(st.x[i] + ox, st.y[i] + oy);
+  for (int i = a; i <= b; i++) g.vertex(tx[i] + ox, ty[i] + oy);
   g.endShape();
 }
 
-// Lays down points a..b of one strand in short stitches, so that where
-// strands cross, the later pass sits on top and drops its shadow.
-void drawStrand(PGraphics g, Strand st, int a, int b) {
-  int n = st.x.length;
+// Lays down samples a..b in short stitches, so that where the thread
+// crosses itself the later pass sits on top and drops its shadow on the
+// earlier one.
+void drawThread(PGraphics g, int a, int b) {
   g.pushMatrix();
   g.scale(g.width / GRID_W);
   g.noFill();
@@ -924,23 +950,23 @@ void drawStrand(PGraphics g, Strand st, int a, int b) {
     g.strokeCap(SQUARE);
     g.stroke(30, 0, 0, 24);
     g.strokeWeight(TW * 1.8);
-    poly(g, st, s, e, TW * 0.30, TW * 0.44);
+    poly(g, s, e, TW * 0.30, TW * 0.44);
     g.stroke(30, 0, 0, 38);
     g.strokeWeight(TW * 1.2);
-    poly(g, st, s, e, TW * 0.22, TW * 0.32);
+    poly(g, s, e, TW * 0.22, TW * 0.32);
 
     // fibres that escape the twist
     g.strokeCap(ROUND);
     g.stroke(COTTON_FUZZ, 210);
-    g.strokeWeight(0.7);
-    for (int i = max(1, s0); i < e && i < n - 1; i++) {
-      if (st.fuzzLen[i] == 0) continue;
-      float ta = atan2(st.y[i + 1] - st.y[i - 1], st.x[i + 1] - st.x[i - 1]);
-      float side = st.fuzzLen[i] > 0 ? 1 : -1;
-      float na = ta + side * (HALF_PI + st.fuzzAng[i]);
-      float bx = st.x[i] + cos(ta + side * HALF_PI) * TW * 0.35;
-      float by = st.y[i] + sin(ta + side * HALF_PI) * TW * 0.35;
-      float len = abs(st.fuzzLen[i]);
+    g.strokeWeight(0.8);
+    for (int i = max(1, s0); i < e && i < nPts - 1; i++) {
+      if (fuzzLen[i] == 0) continue;
+      float ta = atan2(ty[i + 1] - ty[i - 1], tx[i + 1] - tx[i - 1]);
+      float side = fuzzLen[i] > 0 ? 1 : -1;
+      float na = ta + side * (HALF_PI + fuzzAng[i]);
+      float bx = tx[i] + cos(ta + side * HALF_PI) * TW * 0.35;
+      float by = ty[i] + sin(ta + side * HALF_PI) * TW * 0.35;
+      float len = abs(fuzzLen[i]);
       g.bezier(bx, by,
                bx + cos(na) * len * 0.5, by + sin(na) * len * 0.5,
                bx + cos(na + 0.6) * len * 0.8, by + sin(na + 0.6) * len * 0.8,
@@ -950,26 +976,463 @@ void drawStrand(PGraphics g, Strand st, int a, int b) {
     // body
     g.stroke(COTTON_EDGE);
     g.strokeWeight(TW);
-    poly(g, st, s0, e, 0, 0);
+    poly(g, s0, e, 0, 0);
     g.stroke(COTTON_BODY);
     g.strokeWeight(TW * 0.78);
-    poly(g, st, s0, e, 0, 0);
+    poly(g, s0, e, 0, 0);
     g.stroke(COTTON_LIGHT, 200);
     g.strokeWeight(TW * 0.26);
-    poly(g, st, s0, e, -TW * 0.15, -TW * 0.17);
+    poly(g, s0, e, -TW * 0.15, -TW * 0.17);
 
     // the twist of the ply
     g.stroke(COTTON_TWIST, 130);
-    g.strokeWeight(0.7);
+    g.strokeWeight(0.9);
     g.strokeCap(SQUARE);
-    for (int i = max(1, s0); i < e && i < n - 1; i++) {
+    for (int i = max(1, s0); i < e && i < nPts - 1; i++) {
       if (i % 2 != 0) continue;
-      float ta = atan2(st.y[i + 1] - st.y[i - 1], st.x[i + 1] - st.x[i - 1]) + 0.95;
+      float ta = atan2(ty[i + 1] - ty[i - 1], tx[i + 1] - tx[i - 1]) + 0.95;
       float h = TW * 0.36;
-      g.line(st.x[i] - cos(ta) * h, st.y[i] - sin(ta) * h, st.x[i] + cos(ta) * h, st.y[i] + sin(ta) * h);
+      g.line(tx[i] - cos(ta) * h, ty[i] - sin(ta) * h, tx[i] + cos(ta) * h, ty[i] + sin(ta) * h);
     }
   }
   g.popMatrix();
+}
+
+// =====================================================================
+//  THE FIGURE'S CONTOURS — found in the drawing
+// =====================================================================
+
+class Ring {
+  float[][] pts, nrm;      // even points round an outline; normal pointing away from the line
+  boolean[] ok;            // false where the outline is only the edge of the figure zone
+  float weight;
+}
+
+boolean inFigureZone(float x, float y) {
+  if (y < FIG_TOP) return false;
+  for (float[] b : FIG_NOT) if (x >= b[0] && x < b[2] && y >= b[1] && y < b[3]) return false;
+  return true;
+}
+
+// Marks the figure's ink (dark line, shorts, moustache; not the coral
+// lettering), then follows the edge of every marked area into a ring.
+void traceFigure() {
+  bg.loadPixels();
+  int w = bg.width, h = bg.height, n = w * h;
+  boolean[] ink = new boolean[n], m = new boolean[n];
+  for (int i = 0; i < n; i++) {
+    int c = bg.pixels[i];
+    float a = ((c >>> 24) & 255) / 255.0;
+    float r = 255 + (((c >> 16) & 255) - 255) * a, g = 255 + (((c >> 8) & 255) - 255) * a, b = 255 + ((c & 255) - 255) * a;
+    boolean coral = r > 180 && r - g > 60 && r - b > 60 && abs(g - b) < 45;
+    ink[i] = (255 - min(r, g, b)) > 110 && !coral;
+    m[i] = ink[i] && inFigureZone(i % w, i / w);
+  }
+
+  // every pixel edge between marked and unmarked, directed so that the
+  // marked side is on the right; two edges can leave one corner
+  int vw = w + 1;
+  int[] nextA = new int[vw * (h + 1)], nextB = new int[vw * (h + 1)];
+  java.util.Arrays.fill(nextA, -1);
+  java.util.Arrays.fill(nextB, -1);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      if (!m[y * w + x]) continue;
+      int tl = y * vw + x, tr = tl + 1, bl = tl + vw, br = bl + 1;
+      if (y == 0 || !m[(y - 1) * w + x]) addEdge(nextA, nextB, tl, tr);
+      if (x == w - 1 || !m[y * w + x + 1]) addEdge(nextA, nextB, tr, br);
+      if (y == h - 1 || !m[(y + 1) * w + x]) addEdge(nextA, nextB, br, bl);
+      if (x == 0 || !m[y * w + x - 1]) addEdge(nextA, nextB, bl, tl);
+    }
+  }
+  for (int v = 0; v < nextA.length; v++) {
+    while (nextA[v] != -1) {
+      ArrayList<float[]> loop = new ArrayList<float[]>();
+      int cur = v;
+      boolean closed = false;
+      for (int guard = 0; guard < 400000; guard++) {
+        int nx = nextA[cur];
+        if (nx == -1) break;
+        nextA[cur] = nextB[cur];
+        nextB[cur] = -1;
+        loop.add(new float[] { cur % vw, cur / vw });
+        cur = nx;
+        if (cur == v) { closed = true; break; }
+      }
+      if (closed && loop.size() >= 30) {
+        Ring r = resample(smoothRing(loop), ink, w, h);
+        if (r != null) figureRings.add(r);
+      }
+    }
+  }
+  println("figure outlines found: " + figureRings.size());
+}
+
+void addEdge(int[] nextA, int[] nextB, int from, int to) {
+  if (nextA[from] == -1) nextA[from] = to; else nextB[from] = to;
+}
+
+// takes the pixel staircase out of a traced edge
+ArrayList<float[]> smoothRing(ArrayList<float[]> in) {
+  int n = in.size();
+  ArrayList<float[]> out = in;
+  for (int pass = 0; pass < 2; pass++) {
+    ArrayList<float[]> nx = new ArrayList<float[]>();
+    for (int i = 0; i < n; i++) {
+      float sx = 0, sy = 0;
+      for (int d = -2; d <= 2; d++) { float[] p = out.get(((i + d) % n + n) % n); sx += p[0]; sy += p[1]; }
+      nx.add(new float[] { sx / 5, sy / 5 });
+    }
+    out = nx;
+  }
+  return out;
+}
+
+// even points round a closed ring, each with the normal that points away
+// from the line (the edges were followed with the line on the right)
+Ring resample(ArrayList<float[]> ring, boolean[] ink, int w, int h) {
+  ArrayList<float[]> out = new ArrayList<float[]>();
+  float carry = 0;
+  for (int i = 0; i < ring.size(); i++) {
+    float[] a = ring.get(i), b = ring.get((i + 1) % ring.size());
+    float len = dist(a[0], a[1], b[0], b[1]);
+    float d = carry;
+    while (d < len) {
+      float u = d / len;
+      out.add(new float[] { a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u });
+      d += CONTOUR_SPACING;
+    }
+    carry = d - len;
+  }
+  int n = out.size();
+  if (n * CONTOUR_SPACING < CONTOUR_MIN_LENGTH) return null;
+  Ring r = new Ring();
+  r.pts = out.toArray(new float[n][]);
+  r.nrm = new float[n][2];
+  r.ok = new boolean[n];
+  int good = 0;
+  for (int k = 0; k < n; k++) {
+    float[] p = r.pts[(k - 2 + n) % n], q = r.pts[(k + 2) % n];
+    float dx = q[0] - p[0], dy = q[1] - p[1];
+    float l = sqrt(dx * dx + dy * dy);
+    if (l == 0) l = 1;
+    r.nrm[k][0] = dy / l;
+    r.nrm[k][1] = -dx / l;
+    // if there is still ink just outside, this stretch is where the zone
+    // cut through a line of the cloud: not a real outline
+    int sx = (int) constrain(round(r.pts[k][0] + r.nrm[k][0] * 2.5 - 0.5), 0, w - 1);
+    int sy = (int) constrain(round(r.pts[k][1] + r.nrm[k][1] * 2.5 - 0.5), 0, h - 1);
+    r.ok[k] = !ink[sy * w + sx];
+    if (r.ok[k]) good++;
+  }
+  if (good < n * 0.3) return null;
+  r.weight = pow(good, 0.8);
+  return r;
+}
+
+// =====================================================================
+//  CONTOUR STRANDS, FLORA, FAUNA
+// =====================================================================
+
+class Flora {
+  int k, kind, petals;         // kind: 0 leaf, 1 bud, 2 flower, 3 fern tip
+  float a, size;
+  float[] col, col2;
+  boolean baked;
+}
+
+class Strand {
+  float[][] pts;
+  float[] ang, col;
+  float w0, start, dur;
+  int drawn;
+  ArrayList<Flora> flora = new ArrayList<Flora>();
+}
+
+class Creature {
+  int kind, k;                 // kind: 0 butterfly, 1 ladybird, 2 snail
+  Strand th;
+  float size, a, phase;
+  float[] col, col2;
+}
+
+float[] rgba(String hx, float a) { return new float[] { unhex(hx.substring(1, 3)), unhex(hx.substring(3, 5)), unhex(hx.substring(5, 7)), a }; }
+String pick(String[] arr) { return arr[floor(random(arr.length))]; }
+
+void buildStrands() {
+  randomSeed(SEED + 6);
+  noiseSeed(SEED + 6);
+  if (figureRings.size() == 0) return;
+  float total = 0;
+  for (Ring r : figureRings) total += r.weight;
+  for (int i = 0; i < STRAND_COUNT; i++) {
+    float pk = random(total);
+    Ring ring = figureRings.get(0);
+    for (Ring r : figureRings) { pk -= r.weight; if (pk < 0) { ring = r; break; } }
+    strands.add(makeStrand(ring));
+  }
+  randomSeed(SEED + 7);
+  place(0, BUTTERFLIES, BUTTERFLY_MIN, BUTTERFLY_MAX);
+  place(1, LADYBIRDS, LADYBIRD_MIN, LADYBIRD_MAX);
+  place(2, SNAILS, SNAIL_MIN, SNAIL_MAX);
+}
+
+void place(int kind, int n, float smin, float smax) {
+  for (int i = 0; i < n; i++) {
+    Creature c = new Creature();
+    c.kind = kind;
+    c.th = strands.get(floor(random(strands.size())));
+    c.k = floor(random(c.th.pts.length * 0.3, c.th.pts.length));
+    c.size = random(smin, smax);
+    c.a = c.th.ang[c.k] + random(-0.6, 0.6);
+    c.col = rgba(pick(BUTTERFLY_COLORS), 235);
+    c.col2 = rgba(pick(BUTTERFLY_COLORS), 235);
+    c.phase = random(TWO_PI);
+    creatures.add(c);
+  }
+}
+
+Strand makeStrand(Ring ring) {
+  int n = ring.pts.length;
+  int start = floor(random(n));
+  for (int t = 0; t < 40 && !ring.ok[start]; t++) start = floor(random(n));
+  int dir = random(1) < 0.5 ? 1 : -1;
+  int steps = min(MAX_WRAP, floor(n * random(WRAP_MIN, WRAP_MAX)));
+  float off = random(OFFSET_MIN, OFFSET_MAX);
+  float nz = random(1000);
+  ArrayList<float[]> pts = new ArrayList<float[]>();
+
+  // follow the outline at a breathing distance, rising off it at the start
+  for (int k = 0; k < steps; k++) {
+    int idx = ((start + dir * k) % n + n) % n;
+    if (!ring.ok[idx] && k > 3) break;           // the outline ends where the figure zone ends
+    float lift = min(1, k / LIFT);
+    float o = max(1, (off + (noise(k * 0.02, nz) - 0.5) * 2 * WOBBLE) * lift);
+    pts.add(new float[] { ring.pts[idx][0] + ring.nrm[idx][0] * o, ring.pts[idx][1] + ring.nrm[idx][1] * o });
+  }
+  if (pts.size() < 2) { pts.clear(); pts.add(ring.pts[start].clone()); pts.add(ring.pts[(start + 1) % n].clone()); }
+
+  // peel away into the current and end in a tightening curl
+  float[] last = pts.get(pts.size() - 1), prev = pts.get(pts.size() - 2);
+  float x = last[0], y = last[1], a = atan2(last[1] - prev[1], last[0] - prev[0]);
+  int peel = floor(random(PEEL_MIN, PEEL_MAX));
+  float curlDir = random(1) < 0.5 ? -1 : 1;
+  int curlFrom = floor(peel * random(0.55, 0.8));
+  for (int j = 0; j < peel; j++) {
+    a += (noise(x * FLOW_SCALE, y * FLOW_SCALE, nz) - 0.5) * 2 * FLOW_TURN;
+    if (j > curlFrom) { float u = (j - curlFrom) / (float) (peel - curlFrom); a += curlDir * u * u * CURL; }
+    x += cos(a) * STEP_LEN;
+    y += sin(a) * STEP_LEN;
+    pts.add(new float[] { x, y });
+  }
+
+  // soften corners from the outline
+  Strand th = new Strand();
+  int m = pts.size();
+  th.pts = new float[m][2];
+  for (int k = 0; k < m; k++) {
+    float sx = 0, sy = 0;
+    int c = 0;
+    for (int q = max(0, k - SMOOTH); q <= min(m - 1, k + SMOOTH); q++) { sx += pts.get(q)[0]; sy += pts.get(q)[1]; c++; }
+    th.pts[k][0] = sx / c;
+    th.pts[k][1] = sy / c;
+  }
+  th.ang = new float[m];
+  for (int k = 0; k < m; k++) {
+    float[] q = th.pts[min(m - 1, k + 1)], r = th.pts[max(0, k - 1)];
+    th.ang[k] = atan2(q[1] - r[1], q[0] - r[0]);
+  }
+
+  th.col = rgba(pick(STRAND_COLORS), random(STRAND_A_MIN, STRAND_A_MAX));
+  th.w0 = random(STRAND_W_MIN, STRAND_W_MAX);
+  th.start = random(GROW_FRAMES * STAGGER);
+  th.dur = max(30, GROW_FRAMES - th.start);
+
+  // plant forms along the way
+  for (int k = 6; k < m - 2; k++) {
+    float side = random(1) < 0.5 ? -1 : 1;
+    if (random(1) < LEAF_CHANCE) {
+      Flora f = new Flora(); f.k = k; f.kind = 0; f.a = th.ang[k] + side * random(0.5, 1.1);
+      f.size = random(LEAF_MIN, LEAF_MAX); f.col = rgba(pick(LEAF_COLORS), 225); th.flora.add(f);
+    } else if (random(1) < BUD_CHANCE) {
+      Flora f = new Flora(); f.k = k; f.kind = 1; f.a = th.ang[k] + side * random(0.6, 1.2);
+      f.size = random(4, 8); f.col = rgba(pick(FLOWER_COLORS), 235); f.col2 = rgba(pick(LEAF_COLORS), 235); th.flora.add(f);
+    } else if (random(1) < FLOWER_CHANCE) {
+      Flora f = new Flora(); f.k = k; f.kind = 2; f.a = random(TWO_PI); f.size = random(FLOWER_MIN, FLOWER_MAX);
+      f.col = rgba(pick(FLOWER_COLORS), 240); f.col2 = rgba(pick(FLOWER_COLORS), 255); f.petals = floor(random(5, 8)); th.flora.add(f);
+    }
+  }
+  if (random(1) < FERN_TIP_CHANCE) {
+    Flora f = new Flora(); f.k = m - 1; f.kind = 3; f.a = th.ang[m - 1]; f.size = random(5, 12); f.col = th.col.clone(); th.flora.add(f);
+  }
+  return th;
+}
+
+float widthAt(Strand th, int k) {
+  float u = k / (float) (th.pts.length - 1);
+  return th.w0 * (0.2 + 0.8 * pow(max(0, sin(PI * min(1, u * 1.08))), 0.6));
+}
+
+int revealAt(Strand th, float frame) {
+  float u = constrain((frame - th.start) / th.dur, 0, 1);
+  return floor(u * (th.pts.length - 1));
+}
+
+// frame on which point k of a strand is reached
+float reachedAt(Strand th, int k) { return th.start + (k / (float) (th.pts.length - 1)) * th.dur; }
+
+// draw newly reached segments, and bake plant forms that have finished opening
+void growStep(PGraphics g, float frame) {
+  g.strokeCap(ROUND);
+  for (Strand th : strands) {
+    int target = revealAt(th, frame);
+    g.stroke(th.col[0], th.col[1], th.col[2], th.col[3]);
+    for (int k = max(1, th.drawn + 1); k <= target; k++) {
+      g.strokeWeight(widthAt(th, k));
+      g.line(th.pts[k - 1][0], th.pts[k - 1][1], th.pts[k][0], th.pts[k][1]);
+    }
+    if (target > th.drawn) th.drawn = target;
+    for (Flora f : th.flora) {
+      if (f.baked || f.k > th.drawn) continue;
+      if (frame - reachedAt(th, f.k) >= BLOOM_FRAMES) { drawFlora(g, th, f, 1); f.baked = true; }
+    }
+  }
+}
+
+void drawLiveFlora(PGraphics g, float frame) {
+  for (Strand th : strands)
+    for (Flora f : th.flora)
+      if (!f.baked && f.k <= th.drawn) drawFlora(g, th, f, constrain((frame - reachedAt(th, f.k)) / BLOOM_FRAMES, 0.05, 1));
+}
+
+// everything at a given growth frame, for the still
+void drawStrandsAt(PGraphics g, float frame) {
+  g.strokeCap(ROUND);
+  for (Strand th : strands) {
+    int target = revealAt(th, frame);
+    g.stroke(th.col[0], th.col[1], th.col[2], th.col[3]);
+    for (int k = 1; k <= target; k++) {
+      g.strokeWeight(widthAt(th, k));
+      g.line(th.pts[k - 1][0], th.pts[k - 1][1], th.pts[k][0], th.pts[k][1]);
+    }
+  }
+  for (Strand th : strands) {
+    int target = revealAt(th, frame);
+    for (Flora f : th.flora)
+      if (f.k <= target) drawFlora(g, th, f, constrain((frame - reachedAt(th, f.k)) / BLOOM_FRAMES, 0.05, 1));
+  }
+  drawCreatures(g, frame, true);
+}
+
+void drawFlora(PGraphics g, Strand th, Flora f, float grow) {
+  float x = th.pts[f.k][0], y = th.pts[f.k][1], s = f.size * grow;
+  g.pushMatrix();
+  g.translate(x, y);
+  g.rotate(f.a);
+  if (f.kind == 0) {
+    g.noStroke();
+    g.fill(f.col[0], f.col[1], f.col[2], f.col[3]);
+    g.beginShape();
+    g.vertex(0, 0);
+    g.bezierVertex(s * 0.3, -s * 0.42, s * 0.8, -s * 0.34, s, 0);
+    g.bezierVertex(s * 0.8, s * 0.34, s * 0.3, s * 0.42, 0, 0);
+    g.endShape(CLOSE);
+    g.stroke(f.col[0] * 0.6, f.col[1] * 0.6, f.col[2] * 0.6, 150);
+    g.strokeWeight(0.6);
+    g.line(0, 0, s * 0.85, 0);
+  } else if (f.kind == 1) {
+    g.stroke(f.col2[0], f.col2[1], f.col2[2], f.col2[3]);
+    g.strokeWeight(1);
+    g.line(0, 0, s * 1.2, 0);
+    g.noStroke();
+    g.fill(f.col[0], f.col[1], f.col[2], f.col[3]);
+    g.ellipse(s * 1.4, 0, s * 0.9, s * 0.65);
+    g.fill(f.col2[0], f.col2[1], f.col2[2], f.col2[3]);
+    g.ellipse(s * 1.1, 0, s * 0.45, s * 0.6);
+  } else if (f.kind == 2) {
+    g.noStroke();
+    g.fill(f.col[0], f.col[1], f.col[2], f.col[3]);
+    for (int i = 0; i < f.petals; i++) {
+      float u = i * TWO_PI / f.petals;
+      g.ellipse(cos(u) * s * 0.34, sin(u) * s * 0.34, s * 0.5, s * 0.5);
+    }
+    g.fill(f.col2[0], f.col2[1], f.col2[2], f.col2[3]);
+    g.ellipse(0, 0, s * 0.32, s * 0.32);
+  } else {
+    // a small spiral continuing the strand's direction
+    g.noFill();
+    g.stroke(f.col[0], f.col[1], f.col[2], f.col[3]);
+    g.strokeWeight(max(0.5, widthAt(th, f.k) * 0.8 + 0.4));
+    g.beginShape();
+    float turns = 1.6 * grow;
+    for (float u = 0; u <= turns * TWO_PI; u += 0.2) {
+      float r = s * (1 - u / (TWO_PI * 2.2));
+      g.vertex(sin(u) * r, -(1 - cos(u)) * r);
+    }
+    g.endShape();
+  }
+  g.popMatrix();
+}
+
+void drawCreatures(PGraphics g, float frame, boolean live) {
+  for (Creature c : creatures) {
+    if (frame < reachedAt(c.th, c.k) + BLOOM_FRAMES) continue;
+    float s = c.size;
+    g.pushMatrix();
+    g.translate(c.th.pts[c.k][0], c.th.pts[c.k][1]);
+    g.rotate(c.a);
+    if (c.kind == 0) {
+      float beat = live ? 0.35 + 0.65 * abs(sin(frame * FLUTTER + c.phase)) : 1;
+      g.noStroke();
+      for (int side = -1; side <= 1; side += 2) {
+        g.fill(c.col[0], c.col[1], c.col[2], c.col[3]);
+        g.ellipse(-s * 0.15, side * s * 0.42 * beat, s * 0.75, s * 0.8 * beat);
+        g.fill(c.col2[0], c.col2[1], c.col2[2], c.col2[3]);
+        g.ellipse(s * 0.32, side * s * 0.3 * beat, s * 0.5, s * 0.55 * beat);
+      }
+      g.stroke(10);
+      g.strokeWeight(max(0.8, s * 0.09));
+      g.line(-s * 0.45, 0, s * 0.45, 0);
+      g.strokeWeight(0.6);
+      g.line(s * 0.45, 0, s * 0.75, -s * 0.22);
+      g.line(s * 0.45, 0, s * 0.75, s * 0.22);
+    } else if (c.kind == 1) {
+      g.noStroke();
+      g.fill(10);
+      g.ellipse(s * 0.55, 0, s * 0.6, s * 0.6);
+      g.fill(240, 150, 20);
+      g.ellipse(0, 0, s * 1.3, s * 1.1);
+      g.stroke(10);
+      g.strokeWeight(max(0.4, s * 0.08));
+      g.line(-s * 0.65, 0, s * 0.62, 0);
+      g.noStroke();
+      g.fill(10);
+      float[][] dots = { { -0.25, -0.28 }, { -0.25, 0.28 }, { 0.18, -0.24 }, { 0.18, 0.24 } };
+      for (float[] d : dots) g.ellipse(d[0] * s, d[1] * s, s * 0.22, s * 0.22);
+    } else {
+      // snail: soft body with feelers, shell drawn as a spiral
+      g.noStroke();
+      g.fill(196, 172, 150, 240);
+      g.ellipse(s * 0.2, s * 0.35, s * 2.0, s * 0.45);
+      g.stroke(120, 100, 90);
+      g.strokeWeight(0.6);
+      g.line(s * 1.1, s * 0.25, s * 1.35, -s * 0.15);
+      g.line(s * 1.0, s * 0.25, s * 1.15, -s * 0.2);
+      g.noStroke();
+      g.fill(c.col[0], c.col[1], c.col[2], 255);
+      g.ellipse(0, -s * 0.15, s * 1.2, s * 1.2);
+      g.noFill();
+      g.stroke(20);
+      g.strokeWeight(max(0.6, s * 0.08));
+      g.beginShape();
+      for (float u = 0; u < TWO_PI * 2.2; u += 0.25) {
+        float r = s * 0.55 * (1 - u / (TWO_PI * 2.4));
+        g.vertex(cos(u) * r, -s * 0.15 + sin(u) * r);
+      }
+      g.endShape();
+    }
+    g.popMatrix();
+  }
 }
 
 // =====================================================================
@@ -979,7 +1442,11 @@ void drawStrand(PGraphics g, Strand st, int a, int b) {
 void saveHiRes() {
   PGraphics big = compose(HIRES_SCALE);
   big.beginDraw();
-  for (Strand st : strands) drawStrand(big, st, 0, st.x.length - 1);
+  big.pushMatrix();
+  big.scale(HIRES_SCALE);
+  drawStrandsAt(big, GROW_FRAMES + HOLD_FRAMES);
+  big.popMatrix();
+  drawThread(big, 0, nPts - 1);
   big.endDraw();
   big.save(sketchPath("output/woven_figure_trace_" + big.width + "x" + big.height + ".png"));
 }
