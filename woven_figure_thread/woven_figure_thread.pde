@@ -18,14 +18,11 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * The forms are an overlay whose colour is decided pixel by pixel by
- * what lies underneath. On plain paper the blue is solid. Where a form
- * crosses a black line of the drawing, the crossing turns a pale,
- * light blue, so the overlap of type and line becomes a third shape of
- * its own. That third shape is translucent, and by a different amount
- * for every stroke of every form, chosen at random: some crossings are
- * nearly opaque and pale, others let most of the black through. Over the drawing's colours the blue
- * turns translucent. Outlines stay sharp.
+ * The forms are drawn in outline only: a bright blue line of medium
+ * weight around each form, no fill. The strokes that make up a form
+ * are first merged into one shape, so the outline runs around the
+ * whole form and never through it. The drawing shows through every
+ * form untouched; only the blue contour lies over it.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -52,10 +49,8 @@ final int     SEED         = 2026;
 // ---------- the forms: bright blue ----------
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
 
-// ---------- how the forms meet the drawing ----------
-final float CROSS_R = 178, CROSS_G = 208, CROSS_B = 255;   // blue crossing black: pale blue
-final float CROSS_MIN = 0.18, CROSS_MAX = 0.8;             // random opacity range of a crossing
-final float ALPHA_ON_COLOUR = 0.5;                         // opacity of the blue over full colour
+final float OUTLINE      = 5.5;    // weight of the blue outline (grid units; about 3 px in the reel)
+final float OUTLINE_FOOT = 1.7;    // the same for the small print
 
 // ---------- grid (units; the frame is 1932 wide) ----------
 final float GRID_W    = 1932;
@@ -95,7 +90,6 @@ final int   COTTON_FUZZ  = 0xFFE8323A;
 PImage bg;
 ArrayList<Word> words = new ArrayList<Word>();
 HashSet<String> used = new HashSet<String>();     // every form's signature
-java.util.Random dice = new java.util.Random(SEED);   // separate, so forms and thread stay as they were
 ArrayList<PVector> anchors = new ArrayList<PVector>();
 float[] tx, ty, cost, fuzzLen, fuzzAng;
 int nPts;
@@ -154,7 +148,7 @@ public void draw() {
 // =====================================================================
 
 // Drawing + forms at sc times the base size. For every pixel a form
-// covers, the drawing underneath decides the colour the form takes there.
+// outline covers, the blue is laid over the drawing.
 PGraphics compose(int sc) {
   int w = OUT_W * sc, h = OUT_H * sc;
   PGraphics pg = createGraphics(w, h);
@@ -192,15 +186,10 @@ PGraphics compose(int sc) {
 
       int i = y * w + x;
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
-      if (fa > 0) {
-        float hi = max(r, g, b) / 255.0, lo = min(r, g, b) / 255.0;
-        float black = 1 - hi;            // 1 on a black line, 0 on paper or pure colour
-        float colour = hi - lo;          // 1 on a pure colour, 0 on paper or black
-        float ca = lerp(CROSS_MIN, CROSS_MAX, ((pg.pixels[i] >> 16) & 255) / 255.0);   // this stroke's own crossing opacity
-        float k = fa * lerp(1, ALPHA_ON_COLOUR, colour) * lerp(1, ca, black);
-        r += (lerp(FORM_R, CROSS_R, black) - r) * k;
-        g += (lerp(FORM_G, CROSS_G, black) - g) * k;
-        b += (lerp(FORM_B, CROSS_B, black) - b) * k;
+      if (fa > 0) {            // the blue outline lies on top of the drawing
+        r += (FORM_R - r) * fa;
+        g += (FORM_G - g) * fa;
+        b += (FORM_B - b) * fa;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
@@ -216,34 +205,51 @@ PGraphics compose(int sc) {
 
 class Glyph {
   ArrayList<float[]> prims = new ArrayList<float[]>();
-  FloatList crossing = new FloatList();
+  java.awt.geom.Area outline;      // all strokes of the form merged into one shape
   float w;
   boolean mono;
   String sig = "";
   Glyph(float w, boolean mono) { this.w = w; this.mono = mono; }
-  void rect(float x, float y, float rw, float rh) { prims.add(new float[] { 0, x, y, rw, rh }); mark(); }
+  void rect(float x, float y, float rw, float rh) { prims.add(new float[] { 0, x, y, rw, rh }); }
   void quad(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4) {
     prims.add(new float[] { 1, x1, y1, x2, y2, x3, y3, x4, y4 });
-    mark();
   }
-  void arc(float cx, float cy, float dw, float dh, float a0, float a1) { prims.add(new float[] { 2, cx, cy, dw, dh, a0, a1 }); mark(); }
-  void line(float x1, float y1, float x2, float y2) { prims.add(new float[] { 3, x1, y1, x2, y2 }); mark(); }
-  // every stroke draws its own number: how opaque it is where it crosses black
-  void mark() { crossing.append(dice.nextFloat()); }
-
-  void draw(PGraphics g) {
-    g.strokeCap(SQUARE);
-    g.strokeWeight(mono ? MONO : BOLD);
-    for (int n = 0; n < prims.size(); n++) {
-      float[] p = prims.get(n);
+  void arc(float cx, float cy, float dw, float dh, float a0, float a1) { prims.add(new float[] { 2, cx, cy, dw, dh, a0, a1 }); }
+  void line(float x1, float y1, float x2, float y2) { prims.add(new float[] { 3, x1, y1, x2, y2 }); }
+  // the form as one shape: every stroke turned into its own area, then united
+  java.awt.geom.Area shape() {
+    if (outline != null) return outline;
+    outline = new java.awt.geom.Area();
+    java.awt.BasicStroke pen = new java.awt.BasicStroke(mono ? MONO : BOLD,
+      java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER);
+    for (float[] p : prims) {
       int t = (int) p[0];
-      int col = color(round(255 * crossing.get(n)));   // carries the stroke's number to compose()
-      if (t <= 1) { g.noStroke(); g.fill(col); } else { g.noFill(); g.stroke(col); }
-      if (t == 0) g.rect(p[1], p[2], p[3], p[4]);
-      else if (t == 1) g.quad(p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]);
-      else if (t == 2) g.arc(p[1], p[2], p[3], p[4], p[5], p[6]);
-      else g.line(p[1], p[2], p[3], p[4]);
+      java.awt.Shape sh;
+      if (t == 0) sh = new java.awt.geom.Rectangle2D.Float(p[1], p[2], p[3], p[4]);
+      else if (t == 1) {
+        java.awt.geom.Path2D.Float q = new java.awt.geom.Path2D.Float();
+        q.moveTo(p[1], p[2]);
+        q.lineTo(p[3], p[4]);
+        q.lineTo(p[5], p[6]);
+        q.lineTo(p[7], p[8]);
+        q.closePath();
+        sh = q;
+      } else if (t == 2) {
+        // Java measures arc angles counter-clockwise, Processing clockwise
+        sh = pen.createStrokedShape(new java.awt.geom.Arc2D.Float(p[1] - p[3] / 2, p[2] - p[4] / 2, p[3], p[4],
+          -degrees(p[5]), -degrees(p[6] - p[5]), java.awt.geom.Arc2D.OPEN));
+      } else sh = pen.createStrokedShape(new java.awt.geom.Line2D.Float(p[1], p[2], p[3], p[4]));
+      outline.add(new java.awt.geom.Area(sh));
     }
+    return outline;
+  }
+
+  // draws the outline only; weight is in the glyph's own units
+  void draw(PGraphics g, float weight) {
+    java.awt.Graphics2D g2 = ((processing.awt.PGraphicsJava2D) g).g2;
+    g2.setColor(java.awt.Color.WHITE);     // only coverage matters; compose() applies the blue
+    g2.setStroke(new java.awt.BasicStroke(weight, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER));
+    g2.draw(shape());
   }
 }
 
@@ -263,7 +269,7 @@ class Word {
       g.pushMatrix();
       g.translate(x + sx[i] * s, y);
       g.scale(s);
-      glyphs[i].draw(g);
+      glyphs[i].draw(g, (s == 1 ? OUTLINE : OUTLINE_FOOT / s));
       g.popMatrix();
     }
   }
