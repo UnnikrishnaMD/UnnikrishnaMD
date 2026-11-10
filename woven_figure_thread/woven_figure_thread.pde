@@ -18,12 +18,12 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * The forms are a translucent overlay whose opacity is decided pixel
- * by pixel by what lies underneath. On plain paper the blue is solid.
- * Where a form crosses a black line of the drawing it turns
- * see-through, so the line shows as a deep blue; over the drawing's
- * colours it sits in between. One form can therefore be solid in one
- * part and transparent in another. Its outline stays sharp.
+ * The forms are an overlay whose colour is decided pixel by pixel by
+ * what lies underneath. On plain paper the blue is solid. Where a form
+ * crosses a black line of the drawing, the crossing turns a pale,
+ * light blue, so the overlap of type and line becomes a third shape of
+ * its own, lighter than both. Over the drawing's colours the blue
+ * turns translucent. Outlines stay sharp.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -50,9 +50,9 @@ final int     SEED         = 2026;
 // ---------- the forms: bright blue ----------
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
 
-// ---------- how the forms yield to the drawing ----------
-// opacity of the blue = 1 on plain paper, falling to ALPHA_ON_INK on solid black
-final float ALPHA_ON_INK = 0.34;
+// ---------- how the forms meet the drawing ----------
+final float CROSS_R = 178, CROSS_G = 208, CROSS_B = 255;   // blue crossing black: pale blue
+final float ALPHA_ON_COLOUR = 0.5;                         // opacity of the blue over full colour
 
 // ---------- grid (units; the frame is 1932 wide) ----------
 final float GRID_W    = 1932;
@@ -150,7 +150,7 @@ public void draw() {
 // =====================================================================
 
 // Drawing + forms at sc times the base size. For every pixel a form
-// covers, the drawing underneath sets how opaque the blue is there.
+// covers, the drawing underneath decides the colour the form takes there.
 PGraphics compose(int sc) {
   int w = OUT_W * sc, h = OUT_H * sc;
   PGraphics pg = createGraphics(w, h);
@@ -189,12 +189,13 @@ PGraphics compose(int sc) {
       int i = y * w + x;
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
       if (fa > 0) {
-        // how much drawing is under this pixel: 0 = plain paper, 1 = solid black
-        float ink = 1 - min(r, g, b) / 255.0;
-        float k = fa * lerp(1, ALPHA_ON_INK, ink);
-        r += (FORM_R - r) * k;
-        g += (FORM_G - g) * k;
-        b += (FORM_B - b) * k;
+        float hi = max(r, g, b) / 255.0, lo = min(r, g, b) / 255.0;
+        float black = 1 - hi;            // 1 on a black line, 0 on paper or pure colour
+        float colour = hi - lo;          // 1 on a pure colour, 0 on paper or black
+        float k = fa * lerp(1, ALPHA_ON_COLOUR, colour);
+        r += (lerp(FORM_R, CROSS_R, black) - r) * k;
+        g += (lerp(FORM_G, CROSS_G, black) - g) * k;
+        b += (lerp(FORM_B, CROSS_B, black) - b) * k;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
