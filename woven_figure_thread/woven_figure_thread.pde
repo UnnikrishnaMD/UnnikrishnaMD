@@ -18,15 +18,21 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * Every form has a bright blue outline. Whether it is also filled is
- * decided pixel by pixel from a study of the drawing:
- *   - on plain paper outside the figure the form is filled solid blue;
+ * Every form has an outline in a slightly lighter blue. Whether it is
+ * also filled is decided pixel by pixel from a study of the drawing:
+ *   - on plain paper the form is filled solid blue, and that includes
+ *     the paper between the brush strokes of the cloud;
  *   - where it crosses a line or a colour of the drawing the fill
  *     stops and only the outline carries on across;
- *   - inside the figure (body, face, hands, legs, and any area the
- *     drawing's lines enclose) it is outline only.
+ *   - inside the figure (body, face, hands, legs) it is outline only.
  * To know what is "inside", the sketch floods the paper from the edge
  * of the frame; small gaps in the brush line are treated as closed.
+ * Everything above the top of the head is the cloud, and is not
+ * counted as body.
+ *
+ * The thread is routed through every form: each loop ends on a point
+ * that lies on the form itself, and the sketch prints a count to the
+ * console to confirm it.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -52,8 +58,10 @@ final int     SEED         = 2026;
 
 // ---------- the forms: bright blue ----------
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
+final float LINE_R = 84, LINE_G = 132, LINE_B = 255;   // the outline: a slightly lighter blue
 
 final float GAP_CLOSE    = 13;     // px: breaks in the drawing's line narrower than twice this count as closed
+final float BODY_TOP     = 556;    // px from the top: above this line is the cloud; nothing there counts as body
 final float OUTLINE      = 5.5;    // weight of the blue outline (grid units; about 3 px in the reel)
 final float OUTLINE_FOOT = 1.7;    // the same for the small print
 
@@ -118,6 +126,7 @@ public void setup() {
 
   setWords();
   buildPath();
+  println("thread passes over " + formsTouched() + " of " + used.size() + " forms");
 
   poster = compose(1);
 
@@ -193,6 +202,10 @@ void studyBackground() {
   chamfer(d, w, h);
   outside = new float[n];
   for (int i = 0; i < n; i++) outside[i] = d[i] < GAP_CLOSE + 1.5 ? 1 : 0;
+
+  // everything above the top of the head is the cloud, not the body:
+  // there the forms may be filled wherever the paper is plain
+  for (int i = 0; i < n; i++) if (i / w < BODY_TOP) outside[i] = 1;
 }
 
 // two-pass chamfer distance transform, in place
@@ -270,10 +283,13 @@ PGraphics compose(int sc) {
         float oc = fa * (pg.pixels[i] & 255) / 255.0;          // outline coverage here
         float paper = constrain(1 - 1.6 * (1 - min(r, g, b) / 255.0), 0, 1);
         float out = outside[i00] * w00 + outside[i10] * w10 + outside[i01] * w01 + outside[i11] * w11;
-        float k = lerp(oc, fa, paper * out);                   // fill only on paper outside the figure
-        r += (FORM_R - r) * k;
-        g += (FORM_G - g) * k;
-        b += (FORM_B - b) * k;
+        float kf = fa * paper * out;                           // fill: only on paper outside the body
+        r += (FORM_R - r) * kf;
+        g += (FORM_G - g) * kf;
+        b += (FORM_B - b) * kf;
+        r += (LINE_R - r) * oc;                                // outline: always, in the lighter blue
+        g += (LINE_G - g) * oc;
+        b += (LINE_B - b) * oc;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
@@ -383,18 +399,67 @@ void setWords() {
     for (Word wd : new Word[] { wb, wm }) {
       float[] sx = wd.mono ? MONO_X : BOLD_X;
       float[] sw = wd.mono ? MONO_SW : BOLD_SW;
-      for (int i = 0; i < sx.length; i++)
-        anchors.add(new PVector(wd.x + sx[i] + sw[i] / 2 + random(-18, 18), y + CAP / 2 + random(-22, 22), 1));
+      for (int i = 0; i < sx.length; i++) {
+        float lx = sw[i] / 2 + random(-18, 18), ly = CAP / 2 + random(-22, 22);
+        PVector pt = onForm(wd.glyphs[i], lx, ly);
+        anchors.add(new PVector(wd.x + sx[i] + pt.x, y + pt.y, 1));
+      }
     }
   }
   // small print: left, centre pair, right
   float[] fx = { MARGIN, 640, 640 + BOLD_W * FOOT_S + 26, GRID_W - 96 - BOLD_W * FOOT_S };
   boolean[] fm = { true, false, true, false };
   for (int i = 0; i < 4; i++) {
-    words.add(new Word(fm[i], fx[i], FOOT_Y, FOOT_S));
-    float hw = (fm[i] ? MONO_W : BOLD_W) * FOOT_S / 2;
-    anchors.add(new PVector(fx[i] + hw, FOOT_Y + CAP * FOOT_S / 2, -hw));
+    Word wd = new Word(fm[i], fx[i], FOOT_Y, FOOT_S);
+    words.add(wd);
+    float[] sx = wd.mono ? MONO_X : BOLD_X;
+    float[] sw = wd.mono ? MONO_SW : BOLD_SW;
+    for (int j = 0; j < sx.length; j++) {          // every small form is visited too
+      PVector pt = onForm(wd.glyphs[j], sw[j] / 2, CAP / 2);
+      anchors.add(new PVector(fx[i] + (sx[j] + pt.x) * FOOT_S, FOOT_Y + pt.y * FOOT_S, 0.3));
+    }
   }
+}
+
+// A point that lies on the form itself, as near to (lx, ly) as can be
+// found, so that the thread sent there really lands on the form.
+// (Own random source: the forms keep the numbers they were made with.)
+java.util.Random picker = new java.util.Random(SEED);
+PVector onForm(Glyph gl, float lx, float ly) {
+  java.awt.geom.Area a = gl.shape();
+  if (a.contains(lx - 6, ly - 6, 12, 12)) return new PVector(lx, ly);
+  PVector best = null;
+  float bd = 99999999;
+  for (int pass = 0; pass < 2 && best == null; pass++) {
+    for (int t = 0; t < 600; t++) {
+      float x = picker.nextFloat() * gl.w, y = picker.nextFloat() * CAP;
+      boolean in = (pass == 0) ? a.contains(x - 6, y - 6, 12, 12) : a.contains(x, y);
+      if (!in) continue;
+      float d = dist(x, y, lx, ly);
+      if (d < bd) { bd = d; best = new PVector(x, y); }
+    }
+  }
+  return best != null ? best : new PVector(lx, ly);
+}
+
+// How many forms the thread actually passes over.
+int formsTouched() {
+  int touched = 0;
+  for (Word wd : words) {
+    float[] sx = wd.mono ? MONO_X : BOLD_X;
+    for (int i = 0; i < wd.glyphs.length; i++) {
+      java.awt.geom.Area a = wd.glyphs[i].shape();
+      float ox = wd.x + sx[i] * wd.s, hw = TW / 2 / wd.s;
+      boolean hit = false;
+      for (int k = 0; k < nPts && !hit; k++) {
+        float lx = (tx[k] - ox) / wd.s, ly = (ty[k] - wd.y) / wd.s;
+        if (lx < -hw || ly < -hw || lx > wd.glyphs[i].w + hw || ly > CAP + hw) continue;
+        hit = a.intersects(lx - hw, ly - hw, 2 * hw, 2 * hw);
+      }
+      if (hit) touched++;
+    }
+  }
+  return touched;
 }
 
 // ---------------------------------------------------------------------
@@ -708,24 +773,20 @@ void buildPath() {
     PVector a = todo.remove(pickNext(todo, cur));
     addHop(cp, cur, a);
 
-    // the loop of wanting: circle the thing, tightening as it goes.
-    // Small print is lassoed from outside.
-    boolean small = a.z < 0;
+    // the loop of wanting: circle the thing, tightening as it goes,
+    // and come to rest on it. Small print gets a small loop.
     float a0 = atan2(cur.y - a.y, cur.x - a.x);
     float dir = random(1) < 0.5 ? 1 : -1;
-    float turns = small ? random(1.05, 1.3) : random(0.9, 2.1);
-    float r0 = random(20, 54);
-    float rx = small ? -a.z + 20 : r0;
-    float ry = small ? 36 : r0 * 0.85;
-    float tighten = small ? 0.08 : 0.4;
-    float wobble = small ? 0.05 : 0.14;
-    int steps = ceil(turns * (small ? 12 : 8));
+    float turns = random(0.9, 2.1);
+    float r0 = random(20, 54) * a.z;
+    int steps = ceil(turns * 8);
     for (int k = 0; k <= steps; k++) {
       float u = k / (float) steps;
       float ang = a0 + dir * TWO_PI * turns * u;
-      float m = (1 - tighten * u) * (1 + random(-wobble, wobble));
-      cp.add(new PVector(a.x + rx * m * cos(ang), a.y + ry * m * sin(ang), 1));
+      float m = (1 - 0.4 * u) * (1 + random(-0.14, 0.14));
+      cp.add(new PVector(a.x + r0 * m * cos(ang), a.y + r0 * 0.85 * m * sin(ang), 1));
     }
+    cp.add(new PVector(a.x, a.y, 1));              // the thread lands on the form
     cur = cp.get(cp.size() - 1).copy();
     cur.z = 0;
   }
