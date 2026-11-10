@@ -18,13 +18,14 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * Every form has an outline in a slightly lighter blue. Whether it is
- * also filled is decided pixel by pixel from a study of the drawing:
- *   - on plain paper the form is filled solid blue, and that includes
- *     the paper between the brush strokes of the cloud;
+ * Every form is either filled or outlined, never both, and which it
+ * is, is decided pixel by pixel from a study of the drawing:
+ *   - on plain paper the form is filled solid blue with no outline,
+ *     and that includes the paper between the cloud's brush strokes;
  *   - where it crosses a line or a colour of the drawing the fill
- *     stops and only the outline carries on across;
- *   - inside the figure (body, face, hands, legs) it is outline only.
+ *     stops and a light blue outline carries on across;
+ *   - inside the figure (body, face, hands, legs) it is light blue
+ *     outline only.
  * To know what is "inside", the sketch floods the paper from the edge
  * of the frame; small gaps in the brush line are treated as closed.
  * Everything above the top of the head is the cloud, and is not
@@ -58,7 +59,7 @@ final int     SEED         = 2026;
 
 // ---------- the forms: bright blue ----------
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
-final float LINE_R = 84, LINE_G = 132, LINE_B = 255;   // the outline: a slightly lighter blue
+final float LINE_R = 112, LINE_G = 160, LINE_B = 255;  // the outline: light blue
 
 final float GAP_CLOSE    = 13;     // px: breaks in the drawing's line narrower than twice this count as closed
 final float BODY_TOP     = 556;    // px from the top: above this line is the cloud; nothing there counts as body
@@ -240,8 +241,8 @@ void chamfer(float[] d, int w, int h) {
 }
 
 // Drawing + forms at sc times the base size. The forms are first drawn
-// as fill + outline; then, pixel by pixel, the fill is kept only on
-// plain paper outside the figure. The outline is always kept.
+// with their fill and outline marked; then, pixel by pixel, the fill is
+// kept on plain paper outside the figure and the outline everywhere else.
 PGraphics compose(int sc) {
   int w = OUT_W * sc, h = OUT_H * sc;
   PGraphics pg = createGraphics(w, h);
@@ -280,16 +281,20 @@ PGraphics compose(int sc) {
       int i = y * w + x;
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
       if (fa > 0) {
-        float oc = fa * (pg.pixels[i] & 255) / 255.0;          // outline coverage here
+        int m = pg.pixels[i];
+        float oOut = fa * (m & 255) / 255.0;                   // outline, the half outside the form
+        float oIn = fa * ((m >> 8) & 255) / 255.0;             // outline, the half inside the form
         float paper = constrain(1 - 1.6 * (1 - min(r, g, b) / 255.0), 0, 1);
         float out = outside[i00] * w00 + outside[i10] * w10 + outside[i01] * w01 + outside[i11] * w11;
-        float kf = fa * paper * out;                           // fill: only on paper outside the body
+        float allow = paper * out;                             // 1 = plain paper outside the body
+        float kf = (fa - oOut) * allow;                        // fill: the form itself, no outline
         r += (FORM_R - r) * kf;
         g += (FORM_G - g) * kf;
         b += (FORM_B - b) * kf;
-        r += (LINE_R - r) * oc;                                // outline: always, in the lighter blue
-        g += (LINE_G - g) * oc;
-        b += (LINE_B - b) * oc;
+        float ko = (oOut + oIn) * (1 - allow);                 // outline: only where there is no fill
+        r += (LINE_R - r) * ko;
+        g += (LINE_G - g) * ko;
+        b += (LINE_B - b) * ko;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
@@ -344,15 +349,22 @@ class Glyph {
     return outline;
   }
 
-  // draws fill and outline in two marker colours; compose() decides
-  // where the fill survives. weight is in the glyph's own units
+  // Draws the form in three marker colours so that compose() can tell
+  // the parts apart: blue = the half of the outline outside the form,
+  // green = the half inside it, red = the body of the form.
+  // weight is in the glyph's own units
   void draw(PGraphics g, float weight) {
     java.awt.Graphics2D g2 = ((processing.awt.PGraphicsJava2D) g).g2;
-    g2.setColor(new java.awt.Color(255, 0, 0));        // fill: no blue channel
+    java.awt.BasicStroke pen = new java.awt.BasicStroke(weight, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER);
+    java.awt.geom.Area band = new java.awt.geom.Area(pen.createStrokedShape(shape()));
+    java.awt.geom.Area inner = new java.awt.geom.Area(band);
+    inner.intersect(shape());
+    g2.setColor(new java.awt.Color(255, 0, 255));
+    g2.fill(band);
+    g2.setColor(new java.awt.Color(255, 0, 0));
     g2.fill(shape());
-    g2.setColor(new java.awt.Color(255, 0, 255));      // outline: blue channel marks it
-    g2.setStroke(new java.awt.BasicStroke(weight, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER));
-    g2.draw(shape());
+    g2.setColor(new java.awt.Color(255, 255, 0));
+    g2.fill(inner);
   }
 }
 
