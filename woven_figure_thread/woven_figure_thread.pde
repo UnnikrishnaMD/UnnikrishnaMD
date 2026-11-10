@@ -18,11 +18,15 @@
  *
  *  3. A strand of bright red cotton that loops every form in turn.
  *
- * The forms are drawn in outline only: a bright blue line of medium
- * weight around each form, no fill. The strokes that make up a form
- * are first merged into one shape, so the outline runs around the
- * whole form and never through it. The drawing shows through every
- * form untouched; only the blue contour lies over it.
+ * Every form has a bright blue outline. Whether it is also filled is
+ * decided pixel by pixel from a study of the drawing:
+ *   - on plain paper outside the figure the form is filled solid blue;
+ *   - where it crosses a line or a colour of the drawing the fill
+ *     stops and only the outline carries on across;
+ *   - inside the figure (body, face, hands, legs, and any area the
+ *     drawing's lines enclose) it is outline only.
+ * To know what is "inside", the sketch floods the paper from the edge
+ * of the frame; small gaps in the brush line are treated as closed.
  *
  * Format: 1080 x 1920 (9:16), 30 fps — Instagram Reel.
  *
@@ -49,6 +53,7 @@ final int     SEED         = 2026;
 // ---------- the forms: bright blue ----------
 final float FORM_R = 10, FORM_G = 60, FORM_B = 255;
 
+final float GAP_CLOSE    = 13;     // px: breaks in the drawing's line narrower than twice this count as closed
 final float OUTLINE      = 5.5;    // weight of the blue outline (grid units; about 3 px in the reel)
 final float OUTLINE_FOOT = 1.7;    // the same for the small print
 
@@ -88,6 +93,7 @@ final int   COTTON_TWIST = 0xFF7E0A0E;
 final int   COTTON_FUZZ  = 0xFFE8323A;
 
 PImage bg;
+float[] outside;                                  // 1 = paper outside the figure, 0 = inside it
 ArrayList<Word> words = new ArrayList<Word>();
 HashSet<String> used = new HashSet<String>();     // every form's signature
 ArrayList<PVector> anchors = new ArrayList<PVector>();
@@ -108,6 +114,7 @@ public void setup() {
 
   bg = loadImage("background.png");
   if (bg.width != OUT_W || bg.height != OUT_H) bg.resize(OUT_W, OUT_H);
+  studyBackground();
 
   setWords();
   buildPath();
@@ -147,8 +154,81 @@ public void draw() {
 //  DRAWING + FORMS
 // =====================================================================
 
-// Drawing + forms at sc times the base size. For every pixel a form
-// outline covers, the blue is laid over the drawing.
+// Finds the paper that lies outside the figure.
+void studyBackground() {
+  bg.loadPixels();
+  int w = bg.width, h = bg.height, n = w * h;
+  float[] inkDist = new float[n];              // distance to the nearest line or colour
+  for (int i = 0; i < n; i++) {
+    int c = bg.pixels[i];
+    float a = ((c >>> 24) & 255) / 255.0;
+    float m = min((c >> 16) & 255, (c >> 8) & 255, c & 255);
+    m = 255 + (m - 255) * a;                   // transparent counts as paper
+    inkDist[i] = (255 - m) > 64 ? 0 : 99999;
+  }
+  chamfer(inkDist, w, h);
+
+  // flood the paper from the frame edge, keeping GAP_CLOSE away from all
+  // ink so that the flood cannot slip through small breaks in a line
+  boolean[] reached = new boolean[n];
+  int[] stack = new int[n];
+  int top = 0;
+  for (int x = 0; x < w; x++) { stack[top++] = x; stack[top++] = (h - 1) * w + x; }
+  for (int y = 0; y < h; y++) { stack[top++] = y * w; stack[top++] = y * w + w - 1; }
+  while (top > 0) {
+    int i = stack[--top];
+    if (reached[i] || inkDist[i] < GAP_CLOSE) continue;
+    reached[i] = true;
+    int x = i % w;
+    if (x > 0) stack[top++] = i - 1;
+    if (x < w - 1) stack[top++] = i + 1;
+    if (i >= w) stack[top++] = i - w;
+    if (i < n - w) stack[top++] = i + w;
+    if (top > n - 8) top = n - 8;              // never overruns: each pixel is accepted once
+  }
+
+  // grow the flooded area back out to the line itself
+  float[] d = new float[n];
+  for (int i = 0; i < n; i++) d[i] = reached[i] ? 0 : 99999;
+  chamfer(d, w, h);
+  outside = new float[n];
+  for (int i = 0; i < n; i++) outside[i] = d[i] < GAP_CLOSE + 1.5 ? 1 : 0;
+}
+
+// two-pass chamfer distance transform, in place
+void chamfer(float[] d, int w, int h) {
+  float d1 = 1, d2 = 1.4142;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int i = y * w + x;
+      float v = d[i];
+      if (x > 0) v = min(v, d[i - 1] + d1);
+      if (y > 0) {
+        v = min(v, d[i - w] + d1);
+        if (x > 0) v = min(v, d[i - w - 1] + d2);
+        if (x < w - 1) v = min(v, d[i - w + 1] + d2);
+      }
+      d[i] = v;
+    }
+  }
+  for (int y = h - 1; y >= 0; y--) {
+    for (int x = w - 1; x >= 0; x--) {
+      int i = y * w + x;
+      float v = d[i];
+      if (x < w - 1) v = min(v, d[i + 1] + d1);
+      if (y < h - 1) {
+        v = min(v, d[i + w] + d1);
+        if (x < w - 1) v = min(v, d[i + w + 1] + d2);
+        if (x > 0) v = min(v, d[i + w - 1] + d2);
+      }
+      d[i] = v;
+    }
+  }
+}
+
+// Drawing + forms at sc times the base size. The forms are first drawn
+// as fill + outline; then, pixel by pixel, the fill is kept only on
+// plain paper outside the figure. The outline is always kept.
 PGraphics compose(int sc) {
   int w = OUT_W * sc, h = OUT_H * sc;
   PGraphics pg = createGraphics(w, h);
@@ -186,10 +266,14 @@ PGraphics compose(int sc) {
 
       int i = y * w + x;
       float fa = ((pg.pixels[i] >>> 24) & 255) / 255.0;
-      if (fa > 0) {            // the blue outline lies on top of the drawing
-        r += (FORM_R - r) * fa;
-        g += (FORM_G - g) * fa;
-        b += (FORM_B - b) * fa;
+      if (fa > 0) {
+        float oc = fa * (pg.pixels[i] & 255) / 255.0;          // outline coverage here
+        float paper = constrain(1 - 1.6 * (1 - min(r, g, b) / 255.0), 0, 1);
+        float out = outside[i00] * w00 + outside[i10] * w10 + outside[i01] * w01 + outside[i11] * w11;
+        float k = lerp(oc, fa, paper * out);                   // fill only on paper outside the figure
+        r += (FORM_R - r) * k;
+        g += (FORM_G - g) * k;
+        b += (FORM_B - b) * k;
       }
       pg.pixels[i] = 0xFF000000 | (round(r) << 16) | (round(g) << 8) | round(b);
     }
@@ -244,10 +328,13 @@ class Glyph {
     return outline;
   }
 
-  // draws the outline only; weight is in the glyph's own units
+  // draws fill and outline in two marker colours; compose() decides
+  // where the fill survives. weight is in the glyph's own units
   void draw(PGraphics g, float weight) {
     java.awt.Graphics2D g2 = ((processing.awt.PGraphicsJava2D) g).g2;
-    g2.setColor(java.awt.Color.WHITE);     // only coverage matters; compose() applies the blue
+    g2.setColor(new java.awt.Color(255, 0, 0));        // fill: no blue channel
+    g2.fill(shape());
+    g2.setColor(new java.awt.Color(255, 0, 255));      // outline: blue channel marks it
     g2.setStroke(new java.awt.BasicStroke(weight, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER));
     g2.draw(shape());
   }
