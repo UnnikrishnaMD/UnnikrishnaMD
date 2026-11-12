@@ -5,7 +5,9 @@
  *
  * Two things only: the painting, and what grows on it. Fine vines find
  * the black lines of the figure, lift off them, follow them part of
- * the way round, then peel away into the open and curl. Along the
+ * the way round, then peel away into the open and curl, throwing
+ * side shoots as they go. Most are gold; among them run glossy blue,
+ * fuchsia and green ones. Along the
  * vines come leaves, compound leaves, tendrils, buds, fern tips and
  * wild flowers: daisies, bells, flower spikes, poppies, seed-heads.
  * The calligraphy around the figure and the lettering at the top are
@@ -51,22 +53,28 @@ final float CONTOUR_SPACING = 3;       // px between points along an outline
 // distance, follows it part of the way round, then peels away into a
 // noise current and ends in a curl.
 final int   STRAND_COUNT = 420;
-final float OFFSET_MIN = 4, OFFSET_MAX = 20;   // distance kept from the outline (px)
-final float WOBBLE = 5;                        // how much that distance breathes
+final float SHOOT_CHANCE = 0.55;               // chance that a vine throws a side shoot (sometimes two)
+final int   SHOOT_MIN = 40, SHOOT_MAX = 170;   // length of a side shoot, in steps
+final float OFFSET_MIN = 4, OFFSET_MAX = 26;   // distance kept from the outline (px)
+final float WOBBLE = 9;                        // how much that distance breathes
 final float LIFT = 24;                         // points over which a vine rises off the outline
 final float WRAP_MIN = 0.10, WRAP_MAX = 0.50;  // share of the outline it travels round
 final int   MAX_WRAP = 700;
-final int   PEEL_MIN = 30, PEEL_MAX = 150;     // steps after leaving the outline
-final float STEP_LEN = 2.2, FLOW_SCALE = 0.006, FLOW_TURN = 0.16, CURL = 0.22;
+final int   PEEL_MIN = 40, PEEL_MAX = 210;     // steps after leaving the outline
+final float STEP_LEN = 2.2, FLOW_SCALE = 0.006, FLOW_TURN = 0.24, CURL = 0.24;
 final int   SMOOTH = 3;
-final float STRAND_W_MIN = 0.9, STRAND_W_MAX = 3.0;
+final float STRAND_W_MIN = 0.9, STRAND_W_MAX = 3.4;
 final float STRAND_A_MIN = 235, STRAND_A_MAX = 255;
 final float STAGGER = 0.65;                    // vines start somewhere in the first 65% of the growth
 
-// ---------- COLOUR: gold vines, violet and white flowers ----------
-final String[] STRAND_COLORS = { "#f2b600", "#e08a00", "#c96a00", "#ffd84a", "#b8860b", "#f6c244", "#8a5a00" };
-final String[] LEAF_COLORS   = { "#d4a017", "#e9c46a", "#b5890f", "#f4d35e", "#9c6f0a", "#c9b037" };
-final String[] FLOWER_COLORS = { "#5b2be0", "#7b4dff", "#2b1e9e", "#ffffff", "#b9a6ff", "#3a1c8f", "#e8e0ff", "#1f3fd6" };
+// ---------- COLOUR ----------
+// Gold is the ground note; the bright vines run through it.
+final String[] GOLD_COLORS   = { "#f2b600", "#e08a00", "#c96a00", "#ffd84a", "#b8860b", "#f6c244", "#8a5a00" };
+final String[] BRIGHT_COLORS = { "#00a8ff", "#1e5bff", "#00d4ff", "#ff1fa8", "#ff4fd0", "#e6007e", "#19e05a", "#7cff3a", "#00c46a" };
+final float BRIGHT_SHARE = 0.42;               // share of vines that are blue, fuchsia or green
+final float SHINE = 0.7;                       // strength of the gloss line along each vine (0 = none)
+final String[] LEAF_COLORS   = { "#d4a017", "#e9c46a", "#f4d35e", "#19e05a", "#7cff3a", "#00c46a", "#b6ff5a", "#0fa958" };
+final String[] FLOWER_COLORS = { "#5b2be0", "#7b4dff", "#ffffff", "#b9a6ff", "#1f3fd6", "#ff1fa8", "#ff7ad9", "#00a8ff", "#e8e0ff" };
 final String[] CENTRE_COLORS = { "#ffd84a", "#ffffff", "#f2b600", "#1a103f" };
 
 // ---------- FLORA ----------
@@ -372,7 +380,7 @@ class Flora {
 
 class Strand {
   float[][] pts;
-  float[] ang, col;
+  float[] ang, col, shine;
   float w0, start, dur;
   int drawn;
   ArrayList<Flora> flora = new ArrayList<Flora>();
@@ -391,7 +399,12 @@ void buildStrands() {
     float pk = random(total);
     Ring ring = figureRings.get(0);
     for (Ring r : figureRings) { pk -= r.weight; if (pk < 0) { ring = r; break; } }
-    strands.add(makeStrand(ring));
+    Strand vine = makeStrand(ring);
+    strands.add(vine);
+    if (random(1) < SHOOT_CHANCE) {
+      strands.add(makeShoot(vine));
+      if (random(1) < 0.3) strands.add(makeShoot(vine));
+    }
   }
 }
 
@@ -446,12 +459,62 @@ Strand makeStrand(Ring ring) {
     th.ang[k] = atan2(q[1] - r[1], q[0] - r[0]);
   }
 
-  th.col = rgba(pick(STRAND_COLORS), random(STRAND_A_MIN, STRAND_A_MAX));
+  th.col = rgba(random(1) < BRIGHT_SHARE ? pick(BRIGHT_COLORS) : pick(GOLD_COLORS), random(STRAND_A_MIN, STRAND_A_MAX));
+  th.shine = gloss(th.col);
   th.w0 = random(STRAND_W_MIN, STRAND_W_MAX);
   th.start = random(GROW_FRAMES * STAGGER);
   th.dur = max(30, GROW_FRAMES - th.start);
 
-  // what grows along the way
+  plant(th);
+  return th;
+}
+
+// the gloss is an opaque paler tone of the vine's own colour, so that
+// the short steps it is drawn in join without a seam
+float[] gloss(float[] c) { float k = 0.72 * SHINE; return new float[] { lerp(c[0], 255, k), lerp(c[1], 255, k), lerp(c[2], 255, k), SHINE > 0 ? 255 : 0 }; }
+
+// A side shoot: leaves a vine part of the way along and wanders off on
+// its own, starting when the vine reaches that point.
+Strand makeShoot(Strand parent) {
+  int pm = parent.pts.length;
+  int k0 = floor(random(0.15, 0.9) * (pm - 1));
+  float x = parent.pts[k0][0], y = parent.pts[k0][1];
+  float a = parent.ang[k0] + (random(1) < 0.5 ? -1 : 1) * random(0.5, 1.3);
+  float nz = random(1000);
+  int steps = floor(random(SHOOT_MIN, SHOOT_MAX));
+  float curlDir = random(1) < 0.5 ? -1 : 1;
+  int curlFrom = floor(steps * random(0.5, 0.8));
+  Strand th = new Strand();
+  th.pts = new float[steps + 1][2];
+  th.pts[0][0] = x;
+  th.pts[0][1] = y;
+  for (int j = 1; j <= steps; j++) {
+    a += (noise(x * FLOW_SCALE, y * FLOW_SCALE, nz) - 0.5) * 2 * FLOW_TURN * 1.3;
+    if (j > curlFrom) { float u = (j - curlFrom) / (float) (steps - curlFrom); a += curlDir * u * u * CURL; }
+    x += cos(a) * STEP_LEN;
+    y += sin(a) * STEP_LEN;
+    th.pts[j][0] = x;
+    th.pts[j][1] = y;
+  }
+  int m = steps + 1;
+  th.ang = new float[m];
+  for (int k = 0; k < m; k++) {
+    float[] q = th.pts[min(m - 1, k + 1)], r = th.pts[max(0, k - 1)];
+    th.ang[k] = atan2(q[1] - r[1], q[0] - r[0]);
+  }
+  // a shoot usually keeps its vine's colour, sometimes breaks into another
+  th.col = random(1) < 0.65 ? parent.col.clone() : rgba(random(1) < 0.6 ? pick(BRIGHT_COLORS) : pick(GOLD_COLORS), random(STRAND_A_MIN, STRAND_A_MAX));
+  th.shine = gloss(th.col);
+  th.w0 = max(STRAND_W_MIN, parent.w0 * random(0.5, 0.85));
+  th.start = reachedAt(parent, k0);
+  th.dur = max(20, (GROW_FRAMES - th.start) * random(0.45, 1));
+  plant(th);
+  return th;
+}
+
+// what grows along a vine
+void plant(Strand th) {
+  int m = th.pts.length;
   for (int k = 6; k < m - 2; k++) {
     float side = random(1) < 0.5 ? -1 : 1;
     float roll = random(1);
@@ -478,7 +541,6 @@ Strand makeStrand(Ring ring) {
   if (random(1) < FERN_TIP_CHANCE) {
     Flora f = new Flora(); f.k = m - 1; f.kind = 3; f.a = th.ang[m - 1]; f.size = random(5, 12); f.col = th.col.clone(); th.flora.add(f);
   }
-  return th;
 }
 
 float widthAt(Strand th, int k) {
@@ -494,16 +556,33 @@ int revealAt(Strand th, float frame) {
 // frame on which point k of a strand is reached
 float reachedAt(Strand th, int k) { return th.start + (k / (float) (th.pts.length - 1)) * th.dur; }
 
+// Steps a..b of a vine: first the body, then a fine paler line along
+// its upper left side, which is what makes it look glossy. The gloss is
+// drawn after the body (and from two steps back) so that no later step
+// of the body paints over it.
+void run(PGraphics g, Strand th, int a, int b) {
+  g.stroke(th.col[0], th.col[1], th.col[2], th.col[3]);
+  for (int k = a; k <= b; k++) {
+    g.strokeWeight(widthAt(th, k));
+    g.line(th.pts[k - 1][0], th.pts[k - 1][1], th.pts[k][0], th.pts[k][1]);
+  }
+  if (th.shine[3] == 0) return;
+  g.stroke(th.shine[0], th.shine[1], th.shine[2], th.shine[3]);
+  for (int k = max(1, a - 2); k <= b; k++) {
+    float w = widthAt(th, k);
+    if (w <= 1) continue;
+    float o = w * 0.22;
+    g.strokeWeight(w * 0.3);
+    g.line(th.pts[k - 1][0] - o, th.pts[k - 1][1] - o, th.pts[k][0] - o, th.pts[k][1] - o);
+  }
+}
+
 // draw newly reached segments, and bake plant forms that have finished opening
 void growStep(PGraphics g, float frame) {
   g.strokeCap(ROUND);
   for (Strand th : strands) {
     int target = revealAt(th, frame);
-    g.stroke(th.col[0], th.col[1], th.col[2], th.col[3]);
-    for (int k = max(1, th.drawn + 1); k <= target; k++) {
-      g.strokeWeight(widthAt(th, k));
-      g.line(th.pts[k - 1][0], th.pts[k - 1][1], th.pts[k][0], th.pts[k][1]);
-    }
+    if (target > th.drawn) run(g, th, max(1, th.drawn + 1), target);
     if (target > th.drawn) th.drawn = target;
     for (Flora f : th.flora) {
       if (f.baked || f.k > th.drawn) continue;
@@ -523,11 +602,7 @@ void drawStrandsAt(PGraphics g, float frame) {
   g.strokeCap(ROUND);
   for (Strand th : strands) {
     int target = revealAt(th, frame);
-    g.stroke(th.col[0], th.col[1], th.col[2], th.col[3]);
-    for (int k = 1; k <= target; k++) {
-      g.strokeWeight(widthAt(th, k));
-      g.line(th.pts[k - 1][0], th.pts[k - 1][1], th.pts[k][0], th.pts[k][1]);
-    }
+    if (target >= 1) run(g, th, 1, target);
   }
   for (Strand th : strands) {
     int target = revealAt(th, frame);
